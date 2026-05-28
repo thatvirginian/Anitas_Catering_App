@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+
+{% block title %}Catering Schedule{% endblock %}
+
+{% block content %}
+
+{# ── Filter Bar ─────────────────────────────────────────────────────────────── #}
+<div class="filter-bar">
+    <form class="filter-form" method="GET" action="/">
+        <div class="filter-group">
+            <label class="filter-label">FROM</label>
+            <input class="filter-input" type="date" name="start" value="{{ start_date }}">
+        </div>
+        <div class="filter-group">
+            <label class="filter-label">TO</label>
+            <input class="filter-input" type="date" name="end" value="{{ end_date }}">
+        </div>
+        <button class="filter-btn" type="submit">APPLY</button>
+        <a class="filter-btn filter-btn--ghost" href="/">RESET</a>
+    </form>
+
+    {# ── Route Toggle ──────────────────────────────────────────────────────── #}
+    <div class="route-toggle">
+        <button class="toggle-btn active" data-route="both">BOTH</button>
+        <button class="toggle-btn" data-route="north">NORTH</button>
+        <button class="toggle-btn" data-route="south">SOUTH</button>
+    </div>
+
+    <div class="totals-bar">
+        {% for label, amount in totals.items() %}
+        <div class="total-chip {% if label == 'Grand Total' %}total-chip--grand{% endif %}">
+            <span class="total-chip__label">{{ label.upper() }}</span>
+            <span class="total-chip__value">${{ "%.2f"|format(amount) }}</span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+{# ── Schedule Body ───────────────────────────────────────────────────────────── #}
+{% if not grouped %}
+<div class="empty-state">
+    <p>No catering orders found for this date range.</p>
+</div>
+{% else %}
+
+{% for route, locations in grouped.items() %}
+<section class="route-section" data-route="{{ route.lower() }}">
+    <div class="route-header">
+        <span class="route-badge">{{ route.upper() }} ROUTE</span>
+    </div>
+
+    {% for location, orders in locations.items() %}
+    <div class="location-block">
+        <div class="location-header">
+            <h2 class="location-name">
+                {{ location.upper() }}
+                <span class="location-total-inline">
+                    ${{ "%.2f"|format(orders | map(attribute='total_amount') | select | list | sum | float) }}
+                </span>
+            </h2>
+            <span class="location-count">{{ orders|length }} ORDER{{ 's' if orders|length != 1 }}</span>
+        </div>
+
+        <div class="table-wrapper">
+            <table class="schedule-table">
+                <thead>
+                    <tr>
+                        <th class="col-date">DATE</th>
+                        <th class="col-day">DAY</th>
+                        <th class="col-svc">SERVICE</th>
+                        <th class="col-travel">TRAVEL</th>
+                        <th class="col-time">DEPART</th>
+                        <th class="col-time">ARRIVAL</th>
+                        <th class="col-dur">DURATION</th>
+                        <th class="col-time">RETURN</th>
+                        <th class="col-total">TOTAL</th>
+                        <th class="col-emp">#EMP</th>
+                        <th class="col-driver">DRIVER</th>
+                        <th class="col-customer">CUSTOMER</th>
+                        <th class="col-company">COMPANY</th>
+                        <th class="col-actions"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for order in orders %}
+                <tr class="order-row" data-guid="{{ order.order_guid }}">
+                    <td class="col-date">{{ order.display_date }}</td>
+                    <td class="col-day">{{ order.display_day }}</td>
+                    <td class="col-svc">
+                        <input class="cell-input" type="text" name="service_type"
+                               value="{{ order.service_type or '' }}"
+                               placeholder="DEL / SETUP">
+                    </td>
+                    <td class="col-travel">
+                        <input class="cell-input" type="text" name="travel_time"
+                               value="{{ order.travel_time or '' }}"
+                               placeholder="30 MIN">
+                    </td>
+                    <td class="col-time">
+                        <input class="cell-input cell-input--time" type="time" name="departure_time"
+                               value="{{ order.departure_time.strftime('%H:%M') if order.departure_time else '' }}">
+                    </td>
+                    <td class="col-time">
+                        <input class="cell-input cell-input--time" type="time" name="arrival_time"
+                               value="{{ order.arrival_time.strftime('%H:%M') if order.arrival_time else '' }}">
+                    </td>
+                    <td class="col-dur">
+                        <input class="cell-input" type="text" name="duration"
+                               value="{{ order.duration or '' }}"
+                               placeholder="45 MIN">
+                    </td>
+                    <td class="col-time">
+                        <input class="cell-input cell-input--time" type="time" name="return_time"
+                               value="{{ order.return_time.strftime('%H:%M') if order.return_time else '' }}">
+                    </td>
+                    <td class="col-total">{{ order.display_total }}</td>
+                    <td class="col-emp">
+                        <input class="cell-input cell-input--num" type="number" name="num_employees"
+                               value="{{ order.num_employees or '' }}"
+                               min="1" placeholder="—">
+                    </td>
+                    <td class="col-driver">
+                        <input class="cell-input" type="text" name="driver_assigned"
+                               value="{{ order.driver_assigned or '' }}"
+                               placeholder="Driver name">
+                    </td>
+                    <td class="col-customer">
+                        {{ order.customer_first or '' }} {{ order.customer_last or '' }}
+                    </td>
+                    <td class="col-company">
+                        <input class="cell-input" type="text" name="event_company"
+                               value="{{ order.event_company or '' }}"
+                               placeholder="Company">
+                    </td>
+                    <td class="col-actions">
+                        <button class="save-btn" onclick="saveRow(this)" title="Save">
+                            <span class="save-icon">✓</span>
+                        </button>
+                        <span class="save-status"></span>
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endfor %}
+</section>
+{% endfor %}
+{% endif %}
+
+<script>
+// ── Route toggle ──────────────────────────────────────────────────────────────
+document.querySelectorAll('.toggle-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const selected = btn.dataset.route;
+
+        document.querySelectorAll('.route-section').forEach(section => {
+            const route = section.dataset.route;
+            section.style.display = (selected === 'both' || route === selected) ? '' : 'none';
+        });
+
+        // Keep the print link in sync
+        const printLink = document.getElementById('print-link');
+        if (printLink) {
+            const url = new URL(printLink.href);
+            url.searchParams.set('route', selected);
+            printLink.href = url.toString();
+        }
+    });
+});
+
+// ── Save row ──────────────────────────────────────────────────────────────────
+function getRowData(row) {
+    const inputs = row.querySelectorAll('input[name]');
+    const data = {};
+    inputs.forEach(input => { data[input.name] = input.value; });
+    return data;
+}
+
+async function saveRow(btn) {
+    const row = btn.closest('.order-row');
+    const guid = row.dataset.guid;
+    const statusEl = row.querySelector('.save-status');
+    const data = getRowData(row);
+
+    btn.disabled = true;
+    statusEl.textContent = '...';
+    statusEl.className = 'save-status saving';
+
+    try {
+        const resp = await fetch(`/save/${guid}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        const json = await resp.json();
+        if (json.status === 'ok') {
+            statusEl.textContent = 'SAVED';
+            statusEl.className = 'save-status saved';
+            setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'save-status'; }, 2500);
+        } else {
+            statusEl.textContent = 'ERR';
+            statusEl.className = 'save-status error';
+        }
+    } catch (e) {
+        statusEl.textContent = 'ERR';
+        statusEl.className = 'save-status error';
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+// Auto-save on Enter
+document.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.target.classList.contains('cell-input')) {
+        const row = e.target.closest('.order-row');
+        if (row) { const btn = row.querySelector('.save-btn'); if (btn) saveRow(btn); }
+    }
+});
+</script>
+{% endblock %}
