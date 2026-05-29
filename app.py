@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask import Flask, render_template, request, jsonify
 from sqlalchemy import text
 from datetime import datetime, date, timedelta
 import logging
@@ -8,17 +8,24 @@ from src.database_setup import get_engine
 
 app = Flask(__name__)
 logger = logging.getLogger(__name__)
-
 engine = get_engine()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _fmt(value):
+    """Format a numeric value as a currency string with commas."""
+    try:
+        return f"${float(value):,.2f}"
+    except (TypeError, ValueError):
+        return "$0.00"
+
+
 def _get_orders(start_date, end_date):
     """
     Pull all catering orders in the date range, joined to location and
     catering_details. Returns rows grouped as:
-        { route: { location_name: [order_rows] } }
+        { route: { location_name: {"orders": [...], "location_total": "$x,xxx.xx"} } }
     """
     sql = text("""
         SELECT
@@ -59,11 +66,11 @@ def _get_orders(start_date, end_date):
         LEFT JOIN catering_details cd
             ON cd.order_guid = oh.order_guid
         WHERE oh.source = 'Catering'
+          AND oh.voided = FALSE
           AND oh.estimated_fulfillment_date::date
               BETWEEN :start_date AND :end_date
-          AND oh.voided = FALSE
         ORDER BY
-            l.route DESC,           -- South first, North second
+            l.route DESC,
             l.location_name,
             oh.estimated_fulfillment_date
     """)
@@ -74,9 +81,8 @@ def _get_orders(start_date, end_date):
             "end_date":   end_date,
         }).mappings().all()
 
-    # Group: route → location → [orders]
+    # Group: route → location → {orders, location_total}
     grouped = {}
-    route_order = {}   # preserve first-seen order per route
 
     for row in rows:
         route = (row["route"] or "Unassigned").title()
@@ -85,41 +91,46 @@ def _get_orders(start_date, end_date):
         if route not in grouped:
             grouped[route] = {}
         if loc not in grouped[route]:
-            grouped[route][loc] = []
+            grouped[route][loc] = {"orders": [], "location_total": "$0.00"}
 
-        # Build a plain dict so the template can access everything
         order = dict(row)
 
-        # Format dates/times for display
+        # Format dates for display
         efd = order["estimated_fulfillment_date"]
-        if efd:
-            order["display_date"]    = f"{efd.month}/{efd.day}" if hasattr(efd, "strftime") else str(efd)
-            order["display_day"]     = efd.strftime("%a").upper() if hasattr(efd, "strftime") else ""
+        if efd and hasattr(efd, "strftime"):
+            order["display_date"] = f"{efd.month}/{efd.day}"
+            order["display_day"]  = efd.strftime("%a").upper()
         else:
             order["display_date"] = ""
             order["display_day"]  = ""
 
-        # Format currency
-        total = order.get("total_amount") or 0
-        order["display_total"] = f"${float(total):,.2f}"
+        # Format order total
+        order["display_total"] = _fmt(order.get("total_amount"))
 
-        grouped[route][loc].append(order)
+        grouped[route][loc]["orders"].append(order)
+
+    # Compute location totals now that all orders are grouped
+    for route, locations in grouped.items():
+        for loc, data in locations.items():
+            subtotal = sum(float(o.get("total_amount") or 0) for o in data["orders"])
+            data["location_total"] = _fmt(subtotal)
 
     return grouped
 
 
 def _get_route_totals(grouped):
-    """Compute per-route and grand total for the summary bar."""
+    """Compute per-route and grand total — all returned as formatted strings."""
     totals = {}
     grand  = 0.0
     for route, locations in grouped.items():
-        rt = 0.0
-        for orders in locations.values():
-            for o in orders:
-                rt += float(o.get("total_amount") or 0)
-        totals[route] = rt
+        rt = sum(
+            float(o.get("total_amount") or 0)
+            for data in locations.values()
+            for o in data["orders"]
+        )
+        totals[route] = _fmt(rt)
         grand += rt
-    totals["Grand Total"] = grand
+    totals["Grand Total"] = _fmt(grand)
     return totals
 
 
