@@ -30,7 +30,7 @@
         {% for label, amount in totals.items() %}
         <div class="total-chip {% if label == 'Grand Total' %}total-chip--grand{% endif %}">
             <span class="total-chip__label">{{ label.upper() }}</span>
-            <span class="total-chip__value">${{ "%.2f"|format(amount) }}</span>
+            <span class="total-chip__value">{{ amount }}</span>
         </div>
         {% endfor %}
     </div>
@@ -49,16 +49,14 @@
         <span class="route-badge">{{ route.upper() }} ROUTE</span>
     </div>
 
-    {% for location, orders in locations.items() %}
+    {% for location, data in locations.items() %}
     <div class="location-block">
         <div class="location-header">
             <h2 class="location-name">
                 {{ location.upper() }}
-                <span class="location-total-inline">
-                    ${{ "%.2f"|format(orders | map(attribute='total_amount') | select | list | sum | float) }}
-                </span>
+                <span class="location-total-inline">{{ data.location_total }}</span>
             </h2>
-            <span class="location-count">{{ orders|length }} ORDER{{ 's' if orders|length != 1 }}</span>
+            <span class="location-count">{{ data.orders|length }} ORDER{{ 's' if data.orders|length != 1 }}</span>
         </div>
 
         <div class="table-wrapper">
@@ -82,7 +80,7 @@
                     </tr>
                 </thead>
                 <tbody>
-                {% for order in orders %}
+                {% for order in data.orders %}
                 <tr class="order-row" data-guid="{{ order.order_guid }}">
                     <td class="col-date">{{ order.display_date }}</td>
                     <td class="col-day">{{ order.display_day }}</td>
