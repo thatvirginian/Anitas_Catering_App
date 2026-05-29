@@ -220,12 +220,10 @@
 {% for route, locations in grouped.items() %}
 <div class="route-header">{{ route.upper() }} ROUTE</div>
 
-{% for location, orders in locations.items() %}
+{% for location, data in locations.items() %}
 <div class="location-header">
     <span>{{ location.upper() }}</span>
-    <span class="location-total mono">
-        ${{ "%.2f"|format(orders | map(attribute='total_amount') | select | list | sum | float) }}
-    </span>
+    <span class="location-total mono">{{ data.location_total }}</span>
 </div>
 
 <table>
@@ -240,14 +238,14 @@
             <th class="col-dur">Duration</th>
             <th class="col-time">Return</th>
             <th class="col-total">Total</th>
-            <th class="col-emp"># Emp</th>
+            <th class="col-emp">#</th>
             <th class="col-driver">Driver</th>
             <th class="col-cust">Customer</th>
             <th class="col-co">Company</th>
         </tr>
     </thead>
     <tbody>
-    {% for order in orders %}
+    {% for order in data.orders %}
     <tr>
         <td class="col-date mono">{{ order.display_date }}</td>
         <td class="col-day">{{ order.display_day }}</td>
@@ -279,7 +277,7 @@
     {% for label, amount in totals.items() %}
     <div class="total-item {% if label == 'Grand Total' %}total-item--grand{% endif %}">
         <span class="total-item__label">{{ label }}</span>
-        <span class="total-item__value">${{ "%.2f"|format(amount) }}</span>
+        <span class="total-item__value">{{ amount }}</span>
     </div>
     {% endfor %}
 </div>
