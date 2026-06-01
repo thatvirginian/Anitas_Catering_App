@@ -65,7 +65,7 @@ def _get_orders(start_date, end_date):
         ) oc ON true
         LEFT JOIN catering_details cd
             ON cd.order_guid = oh.order_guid
-        WHERE oh.source = 'Catering'
+        WHERE oh.source IN ('Catering', 'Invoice')
           AND oh.voided = FALSE
           AND oh.estimated_fulfillment_date::date
               BETWEEN :start_date AND :end_date
