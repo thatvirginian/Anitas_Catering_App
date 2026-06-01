@@ -37,8 +37,8 @@ def _get_orders(start_date, end_date):
             l.abbreviation,
 
             -- Customer name and total from first check
-            UPPER(oc.customer_first),
-            UPPER(oc.customer_last),
+            oc.customer_first,
+            oc.customer_last,
             oc.total_amount,
 
             -- Catering detail fields (all nullable — LEFT JOIN)
