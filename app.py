@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import requests as http_requests
+import pytz
 
 from src.database_setup import get_engine
 
