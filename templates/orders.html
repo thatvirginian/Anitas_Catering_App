@@ -17,6 +17,34 @@
         </div>
         <button class="filter-btn" type="submit">APPLY</button>
         <a class="filter-btn filter-btn--ghost" href="/">RESET</a>
+
+        <div class="filter-group do-wrapper">
+            <label class="filter-label">DINING OPTION</label>
+            <div class="do-trigger" id="do-trigger" onclick="toggleDOPanel(event)">
+                <span class="do-trigger-text" id="do-label">Loading...</span>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span class="do-badge" id="do-count"></span>
+                    <span style="font-size:10px;color:var(--ink-light);">&#9660;</span>
+                </div>
+            </div>
+            <div class="do-panel" id="do-panel">
+                <div class="do-item" onclick="toggleDOAll(event)">
+                    <input type="checkbox" id="do-opt-all">
+                    <label for="do-opt-all">All dining options</label>
+                </div>
+                <div class="do-divider"></div>
+                {% for opt in dining_options %}
+                <div class="do-item" onclick="toggleDOOpt(event)">
+                    <input type="checkbox"
+                           name="dining_option"
+                           value="{{ opt.guid }}"
+                           id="do-opt-{{ loop.index }}"
+                           {% if opt.guid in dining_option_guids %}checked{% endif %}>
+                    <label for="do-opt-{{ loop.index }}">{{ opt.name }}</label>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
     </form>
 
     {# ── Route Toggle ──────────────────────────────────────────────────────── #}
@@ -76,6 +104,7 @@
                         <th class="col-driver">DRIVER</th>
                         <th class="col-customer">CUSTOMER</th>
                         <th class="col-company">COMPANY</th>
+                        <th class="col-map"></th>
                         <th class="col-actions"></th>
                     </tr>
                 </thead>
@@ -129,6 +158,11 @@
                         <input class="cell-input" type="text" name="event_company"
                                value="{{ order.event_company or '' }}"
                                placeholder="Company">
+                    </td>
+                    <td class="col-map">
+                        <button class="map-btn" onclick="openMap('{{ order.order_guid }}')" title="View map">
+                            🗺
+                        </button>
                     </td>
                     <td class="col-actions">
                         <button class="save-btn" onclick="saveRow(this)" title="Save">
@@ -218,5 +252,315 @@ document.addEventListener('keydown', e => {
         if (row) { const btn = row.querySelector('.save-btn'); if (btn) saveRow(btn); }
     }
 });
+
+// ── Time auto-calculation ─────────────────────────────────────────────────────
+
+function parseMinutes(str) {
+    // Parses strings like "20 min", "20", "1h 30m", "1h30", "90", "1:30"
+    if (!str || !str.trim()) return null;
+    str = str.trim().toLowerCase();
+
+    // HH:MM format
+    const hhmm = str.match(/^(\d+):(\d{2})$/);
+    if (hhmm) return parseInt(hhmm[1]) * 60 + parseInt(hhmm[2]);
+
+    // Xh Ym or Xh format
+    const hm = str.match(/(\d+)\s*h(?:r|rs|our|ours)?\s*(\d+)?\s*m?/);
+    if (hm) return parseInt(hm[1]) * 60 + (hm[2] ? parseInt(hm[2]) : 0);
+
+    // Just minutes — "20 min", "20", "20m"
+    const mins = str.match(/^(\d+)\s*(?:min|m|minutes?)?$/);
+    if (mins) return parseInt(mins[1]);
+
+    return null;
+}
+
+function addMinutesToTime(timeStr, minutes) {
+    // timeStr is HH:MM (24hr from input[type=time])
+    if (!timeStr || minutes === null) return null;
+    const [h, m] = timeStr.split(':').map(Number);
+    const total  = h * 60 + m + minutes;
+    const newH   = Math.floor(total / 60) % 24;
+    const newM   = total % 60;
+    return `${String(newH).padStart(2,'0')}:${String(newM).padStart(2,'0')}`;
+}
+
+function recalcTimes(row) {
+    const depart   = row.querySelector('input[name="departure_time"]');
+    const arrival  = row.querySelector('input[name="arrival_time"]');
+    const duration = row.querySelector('input[name="duration"]');
+    const returnT  = row.querySelector('input[name="return_time"]');
+    const travel   = row.querySelector('input[name="travel_time"]');
+
+    const travelMins   = parseMinutes(travel?.value);
+    const durationMins = parseMinutes(duration?.value);
+
+    // Arrival = Depart + Travel
+    if (depart?.value && travelMins !== null) {
+        const newArrival = addMinutesToTime(depart.value, travelMins);
+        if (newArrival) arrival.value = newArrival;
+    }
+
+    // Return = Arrival + Duration
+    if (arrival?.value && durationMins !== null) {
+        const newReturn = addMinutesToTime(arrival.value, durationMins);
+        if (newReturn) returnT.value = newReturn;
+    }
+}
+
+// Wire up listeners on all current rows
+document.querySelectorAll('.order-row').forEach(row => {
+    row.querySelector('input[name="departure_time"]')
+       ?.addEventListener('change', () => recalcTimes(row));
+    row.querySelector('input[name="travel_time"]')
+       ?.addEventListener('change', () => recalcTimes(row));
+    row.querySelector('input[name="duration"]')
+       ?.addEventListener('change', () => recalcTimes(row));
+    row.querySelector('input[name="arrival_time"]')
+       ?.addEventListener('change', () => recalcTimes(row));
+});
+</script>
+
+<script>
+// ── Dining option dropdown ────────────────────────────────────────────────────
+function updateDOLabel() {
+    const checked = [...document.querySelectorAll('#do-panel input[name="dining_option"]:checked')];
+    const label   = document.getElementById('do-label');
+    const badge   = document.getElementById('do-count');
+    const allCb   = document.getElementById('do-opt-all');
+
+    if (checked.length === 0) {
+        label.textContent    = 'All dining options';
+        badge.textContent    = '';
+        badge.style.display  = 'none';
+        allCb.checked        = true;
+    } else if (checked.length === 1) {
+        label.textContent    = checked[0].nextElementSibling.textContent.trim();
+        badge.style.display  = 'none';
+        allCb.checked        = false;
+    } else {
+        label.textContent    = checked[0].nextElementSibling.textContent.trim();
+        badge.textContent    = checked.length;
+        badge.style.display  = 'inline-flex';
+        allCb.checked        = false;
+    }
+}
+
+function toggleDOPanel(e) {
+    e.stopPropagation();
+    const panel = document.getElementById('do-panel');
+    panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+}
+
+function toggleDOOpt(e) {
+    const cb = e.currentTarget.querySelector('input[type=checkbox]');
+    if (e.target !== cb) cb.checked = !cb.checked;
+    document.getElementById('do-opt-all').checked = false;
+    updateDOLabel();
+}
+
+function toggleDOAll(e) {
+    const allCb = document.getElementById('do-opt-all');
+    if (e.target !== allCb) allCb.checked = !allCb.checked;
+    if (allCb.checked) {
+        document.querySelectorAll('#do-panel input[name="dining_option"]')
+            .forEach(c => c.checked = false);
+    }
+    updateDOLabel();
+}
+
+// Close panel when clicking outside
+document.addEventListener('click', e => {
+    const wrapper = document.querySelector('.do-wrapper');
+    if (wrapper && !wrapper.contains(e.target)) {
+        document.getElementById('do-panel').style.display = 'none';
+    }
+});
+
+// Set initial label on page load
+document.addEventListener('DOMContentLoaded', updateDOLabel);
+</script>
+<div id="map-modal-overlay" class="map-overlay" style="display:none;" onclick="closeMap(event)">
+    <div class="map-modal" onclick="event.stopPropagation()">
+        <div class="map-modal-header">
+            <div>
+                <div class="map-modal-title" id="map-title">Route</div>
+                <div class="map-modal-sub" id="map-sub"></div>
+            </div>
+            <button class="map-close-btn" onclick="closeMap()" title="Close">✕</button>
+        </div>
+        <div class="map-addresses" id="map-addresses"></div>
+        <div id="map-container" style="height:450px;width:100%;"></div>
+        <div class="map-stats" id="map-stats"></div>
+        <div class="map-modal-footer">
+            <span class="map-footer-note" id="map-note"></span>
+            <div style="display:flex;gap:8px;">
+                <button class="filter-btn filter-btn--ghost" onclick="openInMaps()">OPEN IN MAPS</button>
+                <button class="filter-btn" id="map-use-btn" onclick="useTime()">USE TIME</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ── Map ───────────────────────────────────────────────────────────────────────
+let leafletMap = null;
+let currentData = null;
+let activeRowGuid = null;
+
+async function openMap(guid) {
+    activeRowGuid = guid;
+    const overlay = document.getElementById('map-modal-overlay');
+    overlay.style.display = 'flex';
+    document.getElementById('map-title').textContent = 'Loading route...';
+    document.getElementById('map-sub').textContent = '';
+    document.getElementById('map-addresses').innerHTML = '';
+    document.getElementById('map-stats').innerHTML = '';
+    document.getElementById('map-note').textContent = '';
+
+    try {
+        const resp = await fetch(`/map/${guid}`);
+        const d = await resp.json();
+        currentData = d;
+
+        document.getElementById('map-title').textContent = `${d.store.name} \u2192 Delivery`;
+        document.getElementById('map-sub').textContent = `${d.display_date}  ·  ${d.customer}  ·  ${d.total}`;
+
+        document.getElementById('map-addresses').innerHTML = `
+            <div class="map-addr-row">
+                <div class="map-addr-item">
+                    <span class="map-pin map-pin--store"></span>
+                    <div>
+                        <div class="map-addr-name">${d.store.name}</div>
+                        <div class="map-addr-text">${d.store.address || ''}</div>
+                    </div>
+                </div>
+                <div class="map-addr-divider"></div>
+                <div class="map-addr-item">
+                    <span class="map-pin map-pin--delivery"></span>
+                    <div>
+                        <div class="map-addr-name">Delivery address</div>
+                        <div class="map-addr-text">${d.delivery.address || 'No address on file'}</div>
+                    </div>
+                </div>
+            </div>`;
+
+        if (d.travel_minutes !== null) {
+            const hours = Math.floor(d.travel_minutes / 60);
+            const mins = d.travel_minutes % 60;
+            const tStr = hours > 0 ? `${hours}h ${mins}m` : `${mins} min`;
+            document.getElementById('map-stats').innerHTML = `
+                <div class="map-stat"><div class="map-stat-label">EST. DISTANCE</div><div class="map-stat-value">${d.distance_miles} mi</div></div>
+                <div class="map-stat"><div class="map-stat-label">EST. TRAVEL</div><div class="map-stat-value">${tStr}</div></div>`;
+            document.getElementById('map-use-btn').style.display = '';
+            document.getElementById('map-use-btn').textContent = `USE ${tStr}`;
+        } else {
+            document.getElementById('map-stats').innerHTML = `<div class="map-stat"><div class="map-stat-label">TRAVEL TIME</div><div class="map-stat-value">No coordinates available</div></div>`;
+            document.getElementById('map-use-btn').style.display = 'none';
+        }
+
+        document.getElementById('map-note').textContent = d.delivery.geocoded
+            ? 'Address was geocoded and saved'
+            : d.routed
+                ? 'Driving time via OpenRouteService · editable'
+                : 'Estimate based on straight-line distance · editable';
+
+        initMap(d);
+        setTimeout(() => { if (leafletMap) leafletMap.invalidateSize(); }, 100);
+
+    } catch (e) {
+        document.getElementById('map-title').textContent = 'Error loading map';
+        console.error(e);
+    }
+}
+
+function initMap(d) {
+    const container = document.getElementById('map-container');
+    if (leafletMap) { leafletMap.remove(); leafletMap = null; }
+
+    const hasStore = d.store.lat !== null && d.store.lon !== null;
+    const hasDelivery = d.delivery.lat !== null && d.delivery.lon !== null;
+
+    if (!hasStore && !hasDelivery) {
+        container.innerHTML = '<div class="map-no-coords">No coordinates available for this order.</div>';
+        return;
+    }
+
+    container.innerHTML = '';
+    const centerLat = hasDelivery ? d.delivery.lat : d.store.lat;
+    const centerLon = hasDelivery ? d.delivery.lon : d.store.lon;
+
+    leafletMap = L.map('map-container').setView([centerLat, centerLon], 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '\u00a9 <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 18,
+    }).addTo(leafletMap);
+
+    const storeIcon = L.divIcon({
+        html: '<div style="width:14px;height:14px;background:#1a5fa8;border:2.5px solid white;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.4)"></div>',
+        className: '', iconAnchor: [7, 7]
+    });
+    const deliveryIcon = L.divIcon({
+        html: '<div style="width:14px;height:14px;background:#c8392b;border:2.5px solid white;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.4)"></div>',
+        className: '', iconAnchor: [7, 7]
+    });
+
+    const bounds = [];
+    if (hasStore) {
+        L.marker([d.store.lat, d.store.lon], {icon: storeIcon})
+         .addTo(leafletMap)
+         .bindPopup(`<strong>${d.store.name}</strong><br>${d.store.address || ''}`);
+        bounds.push([d.store.lat, d.store.lon]);
+    }
+    if (hasDelivery) {
+        L.marker([d.delivery.lat, d.delivery.lon], {icon: deliveryIcon})
+         .addTo(leafletMap)
+         .bindPopup(`<strong>Delivery</strong><br>${d.delivery.address || ''}`);
+        bounds.push([d.delivery.lat, d.delivery.lon]);
+    }
+    if (hasStore && hasDelivery) {
+        if (d.route_geojson) {
+            // Draw real road route from OSRM
+            L.geoJSON(d.route_geojson, {
+                style: { color: '#1a5fa8', weight: 4, opacity: 0.8 }
+            }).addTo(leafletMap);
+        } else {
+            // Fall back to straight dashed line
+            L.polyline([[d.store.lat, d.store.lon], [d.delivery.lat, d.delivery.lon]], {
+                color: '#1a5fa8', weight: 3, opacity: 0.7, dashArray: '6 4'
+            }).addTo(leafletMap);
+        }
+    }
+    if (bounds.length > 1) leafletMap.fitBounds(bounds, {padding: [40, 40]});
+}
+
+function closeMap(e) {
+    if (e && e.target !== document.getElementById('map-modal-overlay')) return;
+    document.getElementById('map-modal-overlay').style.display = 'none';
+    if (leafletMap) { leafletMap.remove(); leafletMap = null; }
+    activeRowGuid = null;
+    currentData = null;
+}
+
+function useTime() {
+    if (!currentData || !activeRowGuid || currentData.travel_minutes === null) return;
+    const mins = currentData.travel_minutes;
+    const hours = Math.floor(mins / 60);
+    const m = mins % 60;
+    const tStr = hours > 0 ? `${hours}h ${m}m` : `${mins} min`;
+    const row = document.querySelector(`.order-row[data-guid="${activeRowGuid}"]`);
+    if (row) {
+        const travelInput = row.querySelector('input[name="travel_time"]');
+        if (travelInput) travelInput.value = tStr;
+    }
+    document.getElementById('map-modal-overlay').style.display = 'none';
+    if (leafletMap) { leafletMap.remove(); leafletMap = null; }
+}
+
+function openInMaps() {
+    if (!currentData) return;
+    const addr = currentData.delivery.address;
+    if (addr) window.open(`https://maps.google.com/?q=${encodeURIComponent(addr)}`, '_blank');
+}
 </script>
 {% endblock %}
