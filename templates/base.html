@@ -8,11 +8,16 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='leaflet.css') }}">
+    <script src="{{ url_for('static', filename='leaflet.js') }}"></script>
     {% block head %}{% endblock %}
 </head>
 <body>
     <header class="site-header">
         <div class="header-brand">
+            <img src="{{ url_for('static', filename='anitas_logo.png') }}"
+                 alt="Anita's" class="header-logo">
+            <span class="header-divider">|</span>
             <span class="header-label">CATERING OPS</span>
             <span class="header-divider">|</span>
             <span class="header-sub">SCHEDULE MANAGER</span>
@@ -20,7 +25,7 @@
         <nav class="header-nav">
             {% block nav %}
             <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint == 'index' %}active{% endif %}">SCHEDULE</a>
-            <a id="print-link" href="{{ url_for('print_view') }}?start={{ start_date }}&end={{ end_date }}&route=both" class="nav-link" target="_blank">PRINT VIEW</a>
+            <a id="print-link" href="{{ url_for('print_view') }}?start={{ start_date }}&end={{ end_date }}&route=both{% for g in dining_option_guids %}&dining_option={{ g }}{% endfor %}" class="nav-link" target="_blank">PRINT VIEW</a>
             {% endblock %}
         </nav>
     </header>
