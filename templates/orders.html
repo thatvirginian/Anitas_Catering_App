@@ -559,8 +559,14 @@ function useTime() {
 
 function openInMaps() {
     if (!currentData) return;
-    const addr = currentData.delivery.address;
-    if (addr) window.open(`https://maps.google.com/?q=${encodeURIComponent(addr)}`, '_blank');
+    const origin = currentData.store.address;
+    const dest   = currentData.delivery.address;
+    if (origin && dest) {
+        const url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(dest)}&travelmode=driving`;
+        window.open(url, '_blank');
+    } else if (dest) {
+        window.open(`https://maps.google.com/?q=${encodeURIComponent(dest)}`, '_blank');
+    }
 }
 </script>
 {% endblock %}
