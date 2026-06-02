@@ -417,7 +417,7 @@ def print_view():
         totals             = totals,
         start_date         = start_date.strftime("%m/%d/%Y"),
         end_date           = end_date.strftime("%m/%d/%Y"),
-        now                = datetime.now().strftime("%m/%d/%Y %I:%M %p"),
+        now                = datetime.now(pytz.utc).astimezone(pytz.timezone("America/New_York")).strftime("%m/%d/%Y %I:%M %p ET"),
         route_filter       = route_filter,
         dining_option_guids = selected_guids,
     )
