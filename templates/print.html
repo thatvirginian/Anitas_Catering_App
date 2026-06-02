@@ -252,14 +252,14 @@
         <td class="col-svc">{{ order.service_type or '' }}</td>
         <td class="col-travel">{{ order.travel_time or '' }}</td>
         <td class="col-time mono">
-            {% if order.departure_time %}{{ order.departure_time.strftime('%H:%M') }}{% endif %}
+            {% if order.departure_time %}{{ order.departure_time.strftime('%I:%M %p') }}{% endif %}
         </td>
         <td class="col-time mono">
-            {% if order.arrival_time %}{{ order.arrival_time.strftime('%H:%M') }}{% endif %}
+            {% if order.arrival_time %}{{ order.arrival_time.strftime('%I:%M %p') }}{% endif %}
         </td>
         <td class="col-dur">{{ order.duration or '' }}</td>
         <td class="col-time mono">
-            {% if order.return_time %}{{ order.return_time.strftime('%H:%M') }}{% endif %}
+            {% if order.return_time %}{{ order.return_time.strftime('%I:%M %p') }}{% endif %}
         </td>
         <td class="col-total mono">{{ order.display_total }}</td>
         <td class="col-emp" style="text-align:center;">{{ order.num_employees or '' }}</td>
