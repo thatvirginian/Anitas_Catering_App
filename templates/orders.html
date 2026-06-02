@@ -301,9 +301,9 @@ function recalcTimes(row) {
         if (newArrival) arrival.value = newArrival;
     }
 
-    // Return = Arrival + Duration
-    if (arrival?.value && durationMins !== null) {
-        const newReturn = addMinutesToTime(arrival.value, durationMins);
+    // Return = Arrival + Duration + Travel
+    if (arrival?.value && durationMins !== null && travelMins !== null) {
+        const newReturn = addMinutesToTime(arrival.value, durationMins + travelMins);
         if (newReturn) returnT.value = newReturn;
     }
 }
