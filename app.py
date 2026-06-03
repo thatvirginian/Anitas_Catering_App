@@ -55,11 +55,6 @@ def _geocode_address(address):
     Geocode a street address using Geocodio.
     Returns (lat, lon) or (None, None) on failure.
     """
-def _geocode_address(address):
-    """
-    Geocode a street address using Geocodio.
-    Returns (lat, lon) or (None, None) on failure.
-    """
     if not GEOCODIO_API_KEY:
         logger.warning("[GEOCODE] GEOCODIO_API_KEY not set — cannot geocode")
         return None, None
