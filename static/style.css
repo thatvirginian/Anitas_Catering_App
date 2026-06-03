@@ -85,6 +85,7 @@ body {
 
 .nav-link:hover { color: #fff; border-color: #555; }
 .nav-link.active { color: #fff; border-color: var(--accent); }
+.nav-link.logout { color: #fff; border-color: #ffff00; }
 
 /* ── Filter Bar ────────────────────────────────────────────────────────────── */
 .filter-bar {
