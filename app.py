@@ -180,8 +180,8 @@ def _get_orders(start_date, end_date, dining_option_guids=None):
             l.abbreviation,
 
             -- Customer name and total from first check
-            oc.customer_first,
-            oc.customer_last,
+            UPPER(oc.customer_first) AS customer_first,
+            UPPER(oc.customer_last) AS customer_last,
             oc.total_amount,
 
             -- Catering detail fields — derive service_type from dining option if blank
