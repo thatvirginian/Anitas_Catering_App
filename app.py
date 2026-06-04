@@ -48,12 +48,6 @@ def _estimate_travel_minutes(lat1, lon1, lat2, lon2):
     minutes   = (road_dist / 28) * 60
     return int(round(minutes / 5) * 5)
 
-
-def _geocode_address(address):
-    """
-    Geocode a street address using Geocodio.
-    Returns (lat, lon) or (None, None) on failure.
-    """
 def _geocode_address(address):
     """
     Geocode a street address using Geocodio.
