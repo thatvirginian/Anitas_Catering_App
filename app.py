@@ -6,7 +6,6 @@ import logging
 import math
 import os
 import requests as http_requests
-import pytz
 
 from src.database_setup import get_engine
 
@@ -47,9 +46,14 @@ def _estimate_travel_minutes(lat1, lon1, lat2, lon2):
     straight = _haversine_miles(lat1, lon1, lat2, lon2)
     road_dist = straight * 1.25
     minutes   = (road_dist / 28) * 60
-    return int(round(minutes / 5) * 5) + 5
+    return int(round(minutes / 5) * 5)
 
 
+def _geocode_address(address):
+    """
+    Geocode a street address using Geocodio.
+    Returns (lat, lon) or (None, None) on failure.
+    """
 def _geocode_address(address):
     """
     Geocode a street address using Geocodio.
@@ -115,7 +119,7 @@ def _get_ors_route(store_lat, store_lon, delivery_lat, delivery_lon):
             props    = feature["properties"]["summary"]
             geojson  = feature["geometry"]
             distance_miles   = round(props["distance"] / 1609.34, 1)
-            duration_minutes = int(round(props["duration"] / 60 / 5) * 5) + 5
+            duration_minutes = int(round(props["duration"] / 60 / 5) * 5)
             logger.info(f"[ORS] Success: {distance_miles} mi, {duration_minutes} min")
             print(f"[ORS] Success: {distance_miles} mi, {duration_minutes} min")
             return geojson, distance_miles, duration_minutes
@@ -176,12 +180,19 @@ def _get_orders(start_date, end_date, dining_option_guids=None):
             l.abbreviation,
 
             -- Customer name and total from first check
-            UPPER(oc.customer_first) AS customer_first,
-            UPPER(oc.customer_last) AS customer_last,
+            oc.customer_first,
+            oc.customer_last,
             oc.total_amount,
 
-            -- Catering detail fields (all nullable — LEFT JOIN)
-            cd.service_type,
+            -- Catering detail fields — derive service_type from dining option if blank
+            COALESCE(
+                NULLIF(cd.service_type, ''),
+                CASE
+                    WHEN do_.name ILIKE '%delivery%' THEN 'DEL'
+                    WHEN do_.name ILIKE '%pickup%'   THEN 'PICK UP'
+                    ELSE NULL
+                END
+            ) AS service_type,
             cd.travel_time,
             cd.departure_time,
             cd.arrival_time,
@@ -204,6 +215,8 @@ def _get_orders(start_date, end_date, dining_option_guids=None):
         ) oc ON true
         LEFT JOIN catering_details cd
             ON cd.order_guid = oh.order_guid
+        LEFT JOIN dining_options do_
+            ON do_.guid::text = oh.dining_option_guid::text
         WHERE oh.source = 'Catering'
           AND oh.voided = FALSE
           AND oh.estimated_fulfillment_date::date
@@ -413,7 +426,7 @@ def print_view():
         totals             = totals,
         start_date         = start_date.strftime("%m/%d/%Y"),
         end_date           = end_date.strftime("%m/%d/%Y"),
-        now                = datetime.now(pytz.utc).astimezone(pytz.timezone("America/New_York")).strftime("%m/%d/%Y %I:%M %p ET"),
+        now                = datetime.now().strftime("%m/%d/%Y %I:%M %p"),
         route_filter       = route_filter,
         dining_option_guids = selected_guids,
     )
