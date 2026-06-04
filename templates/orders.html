@@ -276,13 +276,17 @@ function parseMinutes(str) {
 }
 
 function addMinutesToTime(timeStr, minutes) {
-    // timeStr is HH:MM (24hr from input[type=time])
-    if (!timeStr || minutes === null) return null;
-    const [h, m] = timeStr.split(':').map(Number);
-    const total  = h * 60 + m + minutes;
-    const newH   = Math.floor(total / 60) % 24;
-    const newM   = total % 60;
-    return `${String(newH).padStart(2,'0')}:${String(newM).padStart(2,'0')}`;
+  if (!timeStr || minutes === null || minutes === undefined) return null;
+  const [h, m] = timeStr.split(':').map(Number);
+  // 1. Calculate total minutes and convert to a positive 24-hour wheel
+  let totalMinutes = h * 60 + m + minutes;
+  // 2. Handle negative totals by rolling them into the positive domain
+  const minutesInDay = 24 * 60;
+  totalMinutes = ((totalMinutes % minutesInDay) + minutesInDay) % minutesInDay;
+  // 3. Extract final hours and minutes
+  const newH = Math.floor(totalMinutes / 60);
+  const newM = totalMinutes % 60;
+  return `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`;
 }
 
 function recalcTimes(row) {
@@ -295,10 +299,10 @@ function recalcTimes(row) {
     const travelMins   = parseMinutes(travel?.value);
     const durationMins = parseMinutes(duration?.value);
 
-    // Arrival = Depart + Travel
-    if (depart?.value && travelMins !== null) {
-        const newArrival = addMinutesToTime(depart.value, travelMins);
-        if (newArrival) arrival.value = newArrival;
+    // Departure = Arrival - Travel
+    if (arrival?.value && travelMins !== null) {
+        const newDepart = addMinutesToTime(arrival.value, -travelMins);
+        if (newDepart) depart.value = newDepart;
     }
 
     // Return = Arrival + Duration + Travel
@@ -310,13 +314,11 @@ function recalcTimes(row) {
 
 // Wire up listeners on all current rows
 document.querySelectorAll('.order-row').forEach(row => {
-    row.querySelector('input[name="departure_time"]')
+    row.querySelector('input[name="arrival_time"]')
        ?.addEventListener('change', () => recalcTimes(row));
     row.querySelector('input[name="travel_time"]')
        ?.addEventListener('change', () => recalcTimes(row));
     row.querySelector('input[name="duration"]')
-       ?.addEventListener('change', () => recalcTimes(row));
-    row.querySelector('input[name="arrival_time"]')
        ?.addEventListener('change', () => recalcTimes(row));
 });
 </script>
