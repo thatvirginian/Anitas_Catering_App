@@ -5,6 +5,7 @@ from datetime import datetime, date, timedelta
 import logging
 import math
 import os
+import pytz
 import requests as http_requests
 
 from src.database_setup import get_engine
@@ -47,6 +48,7 @@ def _estimate_travel_minutes(lat1, lon1, lat2, lon2):
     road_dist = straight * 1.25
     minutes   = (road_dist / 28) * 60
     return int(round(minutes / 5) * 5)
+
 
 def _geocode_address(address):
     """
@@ -99,8 +101,8 @@ def _get_ors_route(store_lat, store_lon, delivery_lat, delivery_lon):
                 [delivery_lon, delivery_lat],
             ],
         }
-        logger.info(f"[ORS] Requesting route: {store_lat},{store_lon} → {delivery_lat},{delivery_lon}")
-        print(f"[ORS] Requesting route: {store_lat},{store_lon} → {delivery_lat},{delivery_lon}")
+        logger.info(f"[ORS] Requesting route: {store_lat},{store_lon} -> {delivery_lat},{delivery_lon}")
+        print(f"[ORS] Requesting route: {store_lat},{store_lon} -> {delivery_lat},{delivery_lon}")
 
         resp = http_requests.post(url, headers=headers, json=body, timeout=10)
         resp.raise_for_status()
@@ -109,9 +111,9 @@ def _get_ors_route(store_lat, store_lon, delivery_lat, delivery_lon):
 
         features = data.get("features", [])
         if features:
-            feature  = features[0]
-            props    = feature["properties"]["summary"]
-            geojson  = feature["geometry"]
+            feature          = features[0]
+            props            = feature["properties"]["summary"]
+            geojson          = feature["geometry"]
             distance_miles   = round(props["distance"] / 1609.34, 1)
             duration_minutes = int(round(props["duration"] / 60 / 5) * 5)
             logger.info(f"[ORS] Success: {distance_miles} mi, {duration_minutes} min")
@@ -175,7 +177,7 @@ def _get_orders(start_date, end_date, dining_option_guids=None):
 
             -- Customer name and total from first check
             UPPER(oc.customer_first) AS customer_first,
-            UPPER(oc.customer_last) AS customer_last,
+            UPPER(oc.customer_last)  AS customer_last,
             oc.total_amount,
 
             -- Catering detail fields — derive service_type from dining option if blank
@@ -204,7 +206,7 @@ def _get_orders(start_date, end_date, dining_option_guids=None):
             SELECT customer_first, customer_last, total_amount
             FROM order_checks
             WHERE order_guid = oh.order_guid
-            ORDER BY opened_date
+            ORDER BY opened_date NULLS LAST, check_guid
             LIMIT 1
         ) oc ON true
         LEFT JOIN catering_details cd
@@ -225,7 +227,6 @@ def _get_orders(start_date, end_date, dining_option_guids=None):
     with engine.connect() as conn:
         rows = conn.execute(sql, params).mappings().all()
 
-    # Group: route → location → {orders, location_total}
     grouped = {}
 
     for row in rows:
@@ -239,7 +240,6 @@ def _get_orders(start_date, end_date, dining_option_guids=None):
 
         order = dict(row)
 
-        # Format dates for display
         efd = order["estimated_fulfillment_date"]
         if efd and hasattr(efd, "strftime"):
             order["display_date"] = f"{efd.month}/{efd.day}"
@@ -248,12 +248,10 @@ def _get_orders(start_date, end_date, dining_option_guids=None):
             order["display_date"] = ""
             order["display_day"]  = ""
 
-        # Format order total
         order["display_total"] = _fmt(order.get("total_amount"))
 
         grouped[route][loc]["orders"].append(order)
 
-    # Compute location totals now that all orders are grouped
     for route, locations in grouped.items():
         for loc, data in locations.items():
             subtotal = sum(float(o.get("total_amount") or 0) for o in data["orders"])
@@ -293,16 +291,13 @@ def index():
         start_date = today
         end_date   = today + timedelta(days=7)
 
-    dining_options     = _get_dining_options()
-    # Default to Catering - Delivery guid if no selection made
-    default_guid       = next((d["guid"] for d in dining_options if d["name"] == "Catering- Delivery"), "")
-    selected_guids     = request.args.getlist("dining_option")
+    dining_options = _get_dining_options()
+    default_guid   = next((d["guid"] for d in dining_options if d["name"] == "Catering- Delivery"), "")
+    selected_guids = request.args.getlist("dining_option")
 
-    # If nothing selected, default to Catering - Delivery
     if not selected_guids or selected_guids == [""]:
         selected_guids = [default_guid] if default_guid else []
 
-    # Empty string means ALL was selected
     if "" in selected_guids:
         selected_guids = []
 
@@ -327,7 +322,6 @@ def save_order(order_guid):
     data = request.get_json(force=True)
 
     def t(val):
-        """Parse HH:MM time string or return None."""
         if not val or str(val).strip() == "":
             return None
         try:
@@ -369,17 +363,17 @@ def save_order(order_guid):
     try:
         with engine.begin() as conn:
             conn.execute(sql, {
-                "order_guid":     order_guid,
-                "service_type":   data.get("service_type"),
-                "travel_time":    data.get("travel_time"),
-                "departure_time": t(data.get("departure_time")),
-                "arrival_time":   t(data.get("arrival_time")),
-                "duration":       data.get("duration"),
-                "return_time":    t(data.get("return_time")),
-                "num_employees":  i(data.get("num_employees")),
-                "driver_assigned":data.get("driver_assigned"),
-                "event_company":  data.get("event_company"),
-                "notes":          data.get("notes"),
+                "order_guid":      order_guid,
+                "service_type":    data.get("service_type"),
+                "travel_time":     data.get("travel_time"),
+                "departure_time":  t(data.get("departure_time")),
+                "arrival_time":    t(data.get("arrival_time")),
+                "duration":        data.get("duration"),
+                "return_time":     t(data.get("return_time")),
+                "num_employees":   i(data.get("num_employees")),
+                "driver_assigned": data.get("driver_assigned"),
+                "event_company":   data.get("event_company"),
+                "notes":           data.get("notes"),
             })
         return jsonify({"status": "ok"})
     except Exception as e:
@@ -389,10 +383,10 @@ def save_order(order_guid):
 
 @app.route("/print")
 def print_view():
-    start_str          = request.args.get("start", date.today().strftime("%Y-%m-%d"))
-    end_str            = request.args.get("end",   (date.today() + timedelta(days=7)).strftime("%Y-%m-%d"))
-    route_filter       = request.args.get("route", "both").lower()
-    selected_guids     = request.args.getlist("dining_option")
+    start_str      = request.args.get("start", date.today().strftime("%Y-%m-%d"))
+    end_str        = request.args.get("end",   (date.today() + timedelta(days=7)).strftime("%Y-%m-%d"))
+    route_filter   = request.args.get("route", "both").lower()
+    selected_guids = request.args.getlist("dining_option")
     if "" in selected_guids:
         selected_guids = []
 
@@ -413,15 +407,17 @@ def print_view():
         }
 
     totals = _get_route_totals(grouped)
+    eastern = pytz.timezone("America/New_York")
+    now_et  = datetime.now(pytz.utc).astimezone(eastern).strftime("%m/%d/%Y %I:%M %p ET")
 
     return render_template(
         "print.html",
-        grouped            = grouped,
-        totals             = totals,
-        start_date         = start_date.strftime("%m/%d/%Y"),
-        end_date           = end_date.strftime("%m/%d/%Y"),
-        now                = datetime.now().strftime("%m/%d/%Y %I:%M %p"),
-        route_filter       = route_filter,
+        grouped             = grouped,
+        totals              = totals,
+        start_date          = start_date.strftime("%m/%d/%Y"),
+        end_date            = end_date.strftime("%m/%d/%Y"),
+        now                 = now_et,
+        route_filter        = route_filter,
         dining_option_guids = selected_guids,
     )
 
@@ -437,14 +433,10 @@ def map_view(order_guid):
         SELECT
             oh.order_guid,
             oh.estimated_fulfillment_date,
-
-            -- Store coordinates
             l.location_name,
             l.address   AS store_address,
             l.latitude  AS store_lat,
             l.longitude AS store_lon,
-
-            -- Delivery info
             di.address1,
             di.address2,
             di.city,
@@ -452,8 +444,6 @@ def map_view(order_guid):
             di.zip_code,
             di.latitude  AS delivery_lat,
             di.longitude AS delivery_lon,
-
-            -- Customer
             oc.customer_first,
             oc.customer_last,
             oc.total_amount
@@ -467,7 +457,8 @@ def map_view(order_guid):
             SELECT customer_first, customer_last, total_amount
             FROM order_checks
             WHERE order_guid = oh.order_guid
-            ORDER BY opened_date LIMIT 1
+            ORDER BY opened_date NULLS LAST, check_guid
+            LIMIT 1
         ) oc ON true
         WHERE oh.order_guid = :order_guid
     """)
@@ -480,7 +471,6 @@ def map_view(order_guid):
 
     row = dict(row)
 
-    # Build delivery address string for geocoding fallback
     parts = [row.get("address1"), row.get("address2"),
              row.get("city"), row.get("state"), row.get("zip_code")]
     delivery_address = ", ".join(p for p in parts if p)
@@ -489,7 +479,6 @@ def map_view(order_guid):
     delivery_lon = row.get("delivery_lon")
     geocoded     = False
 
-    # Geocode on demand if coordinates are missing
     if (delivery_lat is None or delivery_lon is None) and delivery_address:
         delivery_lat, delivery_lon = _geocode_address(delivery_address)
         if delivery_lat and delivery_lon:
@@ -499,18 +488,15 @@ def map_view(order_guid):
     store_lat = row.get("store_lat")
     store_lon = row.get("store_lon")
 
-    # Calculate travel estimate
     travel_minutes = None
     distance_miles = None
     route_geojson  = None
 
     if all(v is not None for v in [store_lat, store_lon, delivery_lat, delivery_lon]):
-        # Try OSRM for real driving route first
         route_geojson, distance_miles, travel_minutes = _get_ors_route(
             float(store_lat), float(store_lon),
             float(delivery_lat), float(delivery_lon)
         )
-        # Fall back to Haversine if OSRM fails
         if travel_minutes is None:
             logger.info(f"[MAP] Using Haversine fallback for order {order_guid}")
             print(f"[MAP] Using Haversine fallback for order {order_guid}")
@@ -525,19 +511,18 @@ def map_view(order_guid):
                 ) * 1.25, 1
             )
         else:
-            logger.info(f"[MAP] Using OSRM route for order {order_guid}")
-            print(f"[MAP] Using OSRM route for order {order_guid}")
+            logger.info(f"[MAP] Using ORS route for order {order_guid}")
+            print(f"[MAP] Using ORS route for order {order_guid}")
     else:
-        logger.warning(f"[MAP] Missing coordinates for order {order_guid} — store: ({store_lat},{store_lon}) delivery: ({delivery_lat},{delivery_lon})")
+        logger.warning(f"[MAP] Missing coordinates for order {order_guid}")
 
     efd = row.get("estimated_fulfillment_date")
 
     return jsonify({
-        "order_guid":       order_guid,
-        "display_date":     f"{efd.month}/{efd.day}" if efd else "",
-        "customer":         f"{row.get('customer_first') or ''} {row.get('customer_last') or ''}".strip(),
-        "total":            _fmt(row.get("total_amount")),
-
+        "order_guid":     order_guid,
+        "display_date":   f"{efd.month}/{efd.day}" if efd else "",
+        "customer":       f"{row.get('customer_first') or ''} {row.get('customer_last') or ''}".strip(),
+        "total":          _fmt(row.get("total_amount")),
         "store": {
             "name":    row.get("location_name"),
             "address": row.get("store_address"),
