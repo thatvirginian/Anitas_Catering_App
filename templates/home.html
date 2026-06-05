@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Catering Ops</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .home-header {
+            position: sticky; top: 0; z-index: 100;
+            height: 52px;
+            background: var(--ink);
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 24px;
+            border-bottom: 3px solid var(--accent);
+        }
+
+        .home-header-brand {
+            display: flex; align-items: center; gap: 10px;
+        }
+
+        .home-logo { height: 36px; width: auto; display: block; }
+
+        .home-header-divider { color: var(--accent); font-size: 18px; }
+
+        .home-header-sub {
+            font-family: var(--font-mono);
+            font-size: 10px; color: #999;
+            letter-spacing: 0.12em;
+        }
+
+        .home-header-logout {
+            font-family: var(--font-display);
+            font-size: 12px; font-weight: 700;
+            letter-spacing: 0.1em; text-transform: uppercase;
+            text-decoration: none; color: #aaa;
+            padding: 6px 14px;
+            border: 1px solid transparent;
+            transition: all 0.15s;
+        }
+        .home-header-logout:hover { color: #fff; border-color: #555; }
+
+        /* ── Hero ──────────────────────────────────────────────────────────── */
+        .home-hero {
+            background: var(--ink);
+            color: #fff;
+            padding: 48px 40px 40px;
+            border-bottom: 1px solid #333;
+        }
+
+        .home-hero-eyebrow {
+            font-family: var(--font-mono);
+            font-size: 11px; letter-spacing: 0.16em;
+            color: #ffff00; text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+
+        .home-hero-title {
+            font-family: var(--font-display);
+            font-size: 48px; font-weight: 800;
+            letter-spacing: 0.02em; text-transform: uppercase;
+            line-height: 1; margin-bottom: 12px;
+        }
+
+        .home-hero-sub {
+            font-family: var(--font-body);
+            font-size: 14px; color: #999;
+            max-width: 480px; line-height: 1.5;
+        }
+
+        /* ── Module grid ───────────────────────────────────────────────────── */
+        .home-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1px;
+            background: var(--rule);
+            border-top: 1px solid var(--rule);
+        }
+
+        .home-card {
+            background: var(--bg-white);
+            padding: 28px 28px 24px;
+            text-decoration: none;
+            color: var(--ink);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            transition: background 0.15s;
+            position: relative;
+        }
+
+        .home-card:hover { background: #faf9f6; }
+
+        .home-card:hover .home-card-arrow { opacity: 1; transform: translateX(0); }
+
+        .home-card-icon {
+            font-size: 28px;
+            line-height: 1;
+            margin-bottom: 4px;
+        }
+
+        .home-card-label {
+            font-family: var(--font-mono);
+            font-size: 10px; letter-spacing: 0.14em;
+            text-transform: uppercase; color: var(--ink-light);
+        }
+
+        .home-card-title {
+            font-family: var(--font-display);
+            font-size: 22px; font-weight: 800;
+            letter-spacing: 0.03em; text-transform: uppercase;
+            line-height: 1.1;
+        }
+
+        .home-card-desc {
+            font-family: var(--font-body);
+            font-size: 13px; color: var(--ink-mid);
+            line-height: 1.5; flex: 1;
+        }
+
+        .home-card-arrow {
+            font-family: var(--font-display);
+            font-size: 11px; font-weight: 700;
+            letter-spacing: 0.1em; text-transform: uppercase;
+            color: var(--accent);
+            opacity: 0; transform: translateX(-4px);
+            transition: all 0.15s;
+            margin-top: 4px;
+        }
+
+        .home-card-tag {
+            position: absolute; top: 16px; right: 16px;
+            font-family: var(--font-mono);
+            font-size: 9px; letter-spacing: 0.08em;
+            text-transform: uppercase;
+            padding: 2px 8px;
+            border: 1px solid var(--rule);
+            color: var(--ink-light);
+            background: var(--bg);
+        }
+
+        .home-card-tag--live {
+            border-color: #2a7a3a;
+            color: #2a7a3a;
+            background: #f0faf2;
+        }
+
+        .home-card-tag--soon {
+            border-color: var(--rule);
+            color: var(--ink-light);
+            opacity: 0.6;
+        }
+
+        .home-card--disabled {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
+        /* ── Footer ────────────────────────────────────────────────────────── */
+        .home-footer {
+            padding: 16px 40px;
+            border-top: 1px solid var(--rule);
+            font-family: var(--font-mono);
+            font-size: 10px; color: var(--ink-light);
+            display: flex; justify-content: space-between;
+        }
+    </style>
+</head>
+<body>
+
+<header class="home-header">
+    <div class="home-header-brand">
+        <img src="https://d3ciwvs59ifrt8.cloudfront.net/9cf1ec9b-d1e5-446e-bba8-79268b0d6b88/a2c61101-ffed-487e-9e8e-1248ae3a4cb7.png"
+             alt="Anita's" class="home-logo">
+        <span class="home-header-divider">|</span>
+        <span class="home-header-sub">CATERING OPS</span>
+    </div>
+    <a href="/.auth/logout" class="home-header-logout">LOGOUT</a>
+</header>
+
+<div class="home-hero">
+    <div class="home-hero-eyebrow">Anita's New Mexico Style Grill</div>
+    <div class="home-hero-title">Catering Ops</div>
+    <div class="home-hero-sub">Internal operations tools for the catering department.</div>
+</div>
+
+<div class="home-grid">
+
+    <a href="{{ url_for('index') }}" class="home-card">
+        <span class="home-card-tag home-card-tag--live">LIVE</span>
+        <div class="home-card-icon">📋</div>
+        <div class="home-card-label">Scheduling</div>
+        <div class="home-card-title">Weekly Schedule</div>
+        <div class="home-card-desc">
+            View and manage catering orders by location and route.
+            Fill in service details, travel times, drivers, and print the week.
+        </div>
+        <div class="home-card-arrow">OPEN →</div>
+    </a>
+
+    <a href="{{ url_for('store') }}" class="home-card">
+        <span class="home-card-tag home-card-tag--live">LIVE</span>
+        <div class="home-card-icon">🏪</div>
+        <div class="home-card-label">Operations</div>
+        <div class="home-card-title">Store View</div>
+        <div class="home-card-desc">
+            Read-only catering schedule filtered by location.
+            View order details, times, and drivers for your store.
+        </div>
+        <div class="home-card-arrow">OPEN →</div>
+    </a>
+
+    <div class="home-card home-card--disabled">
+        <span class="home-card-tag home-card-tag--soon">COMING SOON</span>
+        <div class="home-card-icon">📊</div>
+        <div class="home-card-label">Reporting</div>
+        <div class="home-card-title">Catering Reports</div>
+        <div class="home-card-desc">
+            Revenue summaries, order trends, and location performance
+            across the catering operation.
+        </div>
+    </div>
+
+</div>
+
+<div class="home-footer">
+    <span>Anita's Catering Ops &nbsp;·&nbsp; Internal Use Only</span>
+    <span>{{ year }}</span>
+</div>
+
+</body>
+</html>

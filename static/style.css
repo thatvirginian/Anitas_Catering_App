@@ -584,10 +584,10 @@ body {
 @media screen and (max-width: 768px) {
     :root {
         /* Allow header to expand dynamically if things wrap */
-        --header-h: auto; 
+        --header-h: auto;
     }
 
-    html { 
+    html {
         font-size: 13px; /* Slightly scale down global font sizes to fit phone screens */
     }
 
@@ -650,7 +650,7 @@ body {
         font-size: 12px;
     }
 
-    .filter-input, 
+    .filter-input,
     .filter-select,
     .do-trigger {
         width: 100% !important;
@@ -705,9 +705,9 @@ body {
     }
 
     /* ── Table & Column Width Neutralization ───────────────────────────────── */
-    /* Your .table-wrapper has overflow-x: auto which is great! This ensures 
+    /* Your .table-wrapper has overflow-x: auto which is great! This ensures
        the table scales sideways flawlessly without breaking your viewport grid. */
-    .schedule-table th, 
+    .schedule-table th,
     .schedule-table td {
         padding: 8px 6px; /* Taller table fields to assist accurate row viewing/tapping */
     }

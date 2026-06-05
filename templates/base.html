@@ -21,13 +21,13 @@
             <span class="header-label">CATERING OPS</span>
             <span class="header-divider">|</span>
             <span class="header-sub">SCHEDULE MANAGER</span>
-            <span class="header-divider">|</span>
-            <a id="logout-button" href="/.auth/logout" class="nav-link logout">Log Out</a>
         </div>
         <nav class="header-nav">
             {% block nav %}
+            <a href="{{ url_for('home') }}" class="nav-link">HOME</a>
             <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint == 'index' %}active{% endif %}">SCHEDULE</a>
-            <a id="print-link" href="{{ url_for('print_view') }}?start={{ start_date }}&end={{ end_date }}&route=both{% for g in dining_option_guids %}&dining_option={{ g }}{% endfor %}" class="nav-link" target="_blank">PRINT VIEW</a>
+            <a href="{{ url_for('store') }}" class="nav-link {% if request.endpoint == 'store' %}active{% endif %}">STORE VIEW</a>
+            <a href="/.auth/logout" class="nav-link nav-link--logout">LOGOUT</a>
             {% endblock %}
         </nav>
     </header>

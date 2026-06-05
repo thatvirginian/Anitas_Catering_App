@@ -195,6 +195,7 @@
     <div class="print-title">
         Weekly Catering Schedule
         {% if route_filter != 'both' %} — {{ route_filter.title() }} Route{% endif %}
+        — {{ start_date }} — {{ end_date }}
     </div>
     <div class="print-meta">
         {{ start_date }} — {{ end_date }}<br>

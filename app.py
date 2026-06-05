@@ -141,8 +141,123 @@ def _cache_coordinates(order_guid, lat, lon):
     except Exception as e:
         logger.error(f"[GEOCODE] Failed to cache coordinates for {order_guid}: {e}")
 
-
 def _get_dining_options():
+    """Load all dining options for the filter dropdown."""
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT guid::text, name
+            FROM dining_options
+            ORDER BY name
+        """)).mappings().all()
+    return [dict(r) for r in rows]
+
+def _get_locations():
+    """Load all locations for the store filter dropdown."""
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT store_guid::text AS guid, location_name AS name
+            FROM locations
+            ORDER BY location_name
+        """)).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def _get_store_orders(start_date, end_date, location_guids=None, dining_option_guids=None):
+    """
+    Same as _get_orders but filtered by location(s) and without route grouping.
+    Returns { location_name: {"orders": [...], "location_total": "$x,xxx.xx"} }
+    """
+    location_filter = ""
+    dining_filter   = ""
+    params = {"start_date": start_date, "end_date": end_date}
+
+    if location_guids:
+        location_filter = "AND oh.location_id::text = ANY(:location_guids)"
+        params["location_guids"] = location_guids
+    if dining_option_guids:
+        dining_filter = "AND oh.dining_option_guid::text = ANY(:dining_option_guids)"
+        params["dining_option_guids"] = dining_option_guids
+
+    sql = text(f"""
+        SELECT
+            oh.order_guid,
+            oh.estimated_fulfillment_date,
+            l.location_name,
+            l.route,
+
+            UPPER(oc.customer_first) AS customer_first,
+            UPPER(oc.customer_last)  AS customer_last,
+            oc.total_amount,
+
+            COALESCE(
+                NULLIF(cd.service_type, ''),
+                CASE
+                    WHEN do_.name ILIKE '%delivery%' THEN 'DEL'
+                    WHEN do_.name ILIKE '%pickup%'   THEN 'PICK UP'
+                    ELSE NULL
+                END
+            ) AS service_type,
+            cd.travel_time,
+            cd.departure_time,
+            cd.arrival_time,
+            cd.duration,
+            cd.return_time,
+            cd.num_employees,
+            cd.driver_assigned,
+            cd.event_company,
+            cd.notes
+
+        FROM orders_head oh
+        JOIN locations l
+            ON oh.location_id::text = l.store_guid::text
+        LEFT JOIN LATERAL (
+            SELECT customer_first, customer_last, total_amount
+            FROM order_checks
+            WHERE order_guid = oh.order_guid
+            ORDER BY opened_date NULLS LAST, check_guid
+            LIMIT 1
+        ) oc ON true
+        LEFT JOIN catering_details cd
+            ON cd.order_guid = oh.order_guid
+        LEFT JOIN dining_options do_
+            ON do_.guid::text = oh.dining_option_guid::text
+        WHERE oh.source = 'Catering'
+          AND oh.voided = FALSE
+          AND oh.estimated_fulfillment_date::date
+              BETWEEN :start_date AND :end_date
+          {location_filter}
+          {dining_filter}
+        ORDER BY
+            l.location_name,
+            oh.estimated_fulfillment_date
+    """)
+
+    with engine.connect() as conn:
+        rows = conn.execute(sql, params).mappings().all()
+
+    grouped = {}
+    for row in rows:
+        loc = row["location_name"] or "Unknown"
+        if loc not in grouped:
+            grouped[loc] = {"orders": [], "location_total": "$0.00"}
+
+        order = dict(row)
+        efd = order["estimated_fulfillment_date"]
+        if efd and hasattr(efd, "strftime"):
+            order["display_date"] = f"{efd.month}/{efd.day}"
+            order["display_day"]  = efd.strftime("%a").upper()
+        else:
+            order["display_date"] = ""
+            order["display_day"]  = ""
+
+        order["display_total"] = _fmt(order.get("total_amount"))
+        grouped[loc]["orders"].append(order)
+
+    for loc, data in grouped.items():
+        subtotal = sum(float(o.get("total_amount") or 0) for o in data["orders"])
+        data["location_total"] = _fmt(subtotal)
+
+    return grouped
     """Load all dining options for the filter dropdown."""
     with engine.connect() as conn:
         rows = conn.execute(text("""
@@ -279,6 +394,11 @@ def _get_route_totals(grouped):
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route("/")
+def home():
+    return render_template("home.html", year=datetime.now().year)
+
+
+@app.route("/schedule")
 def index():
     today     = date.today()
     start_str = request.args.get("start", today.strftime("%Y-%m-%d"))
@@ -540,6 +660,100 @@ def map_view(order_guid):
         "route_geojson":  route_geojson,
         "routed":         route_geojson is not None,
     })
+
+
+@app.route("/store")
+def store():
+    today     = date.today()
+    start_str = request.args.get("start", today.strftime("%Y-%m-%d"))
+    end_str   = request.args.get("end",   (today + timedelta(days=7)).strftime("%Y-%m-%d"))
+
+    try:
+        start_date = datetime.strptime(start_str, "%Y-%m-%d").date()
+        end_date   = datetime.strptime(end_str,   "%Y-%m-%d").date()
+    except ValueError:
+        start_date = today
+        end_date   = today + timedelta(days=7)
+
+    locations      = _get_locations()
+    dining_options = _get_dining_options()
+
+    # Default dining option to Catering- Delivery
+    default_dining = next((d["guid"] for d in dining_options if d["name"] == "Catering- Delivery"), "")
+    selected_locations     = request.args.getlist("location")
+    selected_dining_guids  = request.args.getlist("dining_option")
+
+    if not selected_dining_guids or selected_dining_guids == [""]:
+        selected_dining_guids = [default_dining] if default_dining else []
+    if "" in selected_dining_guids:
+        selected_dining_guids = []
+
+    grouped = _get_store_orders(
+        start_date, end_date,
+        selected_locations or None,
+        selected_dining_guids or None,
+    )
+
+    # Grand total
+    grand_total = _fmt(sum(
+        float(o.get("total_amount") or 0)
+        for data in grouped.values()
+        for o in data["orders"]
+    ))
+
+    return render_template(
+        "store.html",
+        grouped               = grouped,
+        grand_total           = grand_total,
+        start_date            = start_date.strftime("%Y-%m-%d"),
+        end_date              = end_date.strftime("%Y-%m-%d"),
+        locations             = locations,
+        selected_locations    = selected_locations,
+        dining_options        = dining_options,
+        dining_option_guids   = selected_dining_guids,
+    )
+
+
+@app.route("/store/print")
+def store_print():
+    start_str = request.args.get("start", date.today().strftime("%Y-%m-%d"))
+    end_str   = request.args.get("end",   (date.today() + timedelta(days=7)).strftime("%Y-%m-%d"))
+
+    try:
+        start_date = datetime.strptime(start_str, "%Y-%m-%d").date()
+        end_date   = datetime.strptime(end_str,   "%Y-%m-%d").date()
+    except ValueError:
+        start_date = date.today()
+        end_date   = date.today() + timedelta(days=7)
+
+    selected_locations    = request.args.getlist("location")
+    selected_dining_guids = request.args.getlist("dining_option")
+    if "" in selected_dining_guids:
+        selected_dining_guids = []
+
+    grouped = _get_store_orders(
+        start_date, end_date,
+        selected_locations or None,
+        selected_dining_guids or None,
+    )
+
+    grand_total = _fmt(sum(
+        float(o.get("total_amount") or 0)
+        for data in grouped.values()
+        for o in data["orders"]
+    ))
+
+    eastern = pytz.timezone("America/New_York")
+    now_et  = datetime.now(pytz.utc).astimezone(eastern).strftime("%m/%d/%Y %I:%M %p ET")
+
+    return render_template(
+        "store_print.html",
+        grouped            = grouped,
+        grand_total        = grand_total,
+        start_date         = start_date.strftime("%m/%d/%Y"),
+        end_date           = end_date.strftime("%m/%d/%Y"),
+        now                = now_et,
+    )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,432 @@
+{% extends "base.html" %}
+
+{% block title %}Store View{% endblock %}
+
+{% block content %}
+
+{# ── Filter Bar ─────────────────────────────────────────────────────────────── #}
+<div class="filter-bar">
+    <form class="filter-form" method="GET" action="/store">
+        <div class="filter-group">
+            <label class="filter-label">FROM</label>
+            <input class="filter-input" type="date" name="start" value="{{ start_date }}">
+        </div>
+        <div class="filter-group">
+            <label class="filter-label">TO</label>
+            <input class="filter-input" type="date" name="end" value="{{ end_date }}">
+        </div>
+
+        {# ── Location dropdown ─────────────────────────────────────────────── #}
+        <div class="filter-group do-wrapper" id="loc-wrapper">
+            <label class="filter-label">LOCATION</label>
+            <div class="do-trigger" id="loc-trigger" onclick="toggleLocPanel(event)">
+                <span class="do-trigger-text" id="loc-label">Loading...</span>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span class="do-badge" id="loc-count"></span>
+                    <span style="font-size:10px;color:var(--ink-light);">&#9660;</span>
+                </div>
+            </div>
+            <div class="do-panel" id="loc-panel">
+                <div class="do-item" onclick="toggleLocAll(event)">
+                    <input type="checkbox" id="loc-opt-all">
+                    <label for="loc-opt-all">All locations</label>
+                </div>
+                <div class="do-divider"></div>
+                {% for loc in locations %}
+                <div class="do-item" onclick="toggleLocOpt(event)">
+                    <input type="checkbox"
+                           name="location"
+                           value="{{ loc.guid }}"
+                           id="loc-opt-{{ loop.index }}"
+                           {% if loc.guid in selected_locations %}checked{% endif %}>
+                    <label for="loc-opt-{{ loop.index }}">{{ loc.name }}</label>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        {# ── Dining option dropdown ─────────────────────────────────────────── #}
+        <div class="filter-group do-wrapper">
+            <label class="filter-label">DINING OPTION</label>
+            <div class="do-trigger" id="do-trigger" onclick="toggleDOPanel(event)">
+                <span class="do-trigger-text" id="do-label">Loading...</span>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span class="do-badge" id="do-count"></span>
+                    <span style="font-size:10px;color:var(--ink-light);">&#9660;</span>
+                </div>
+            </div>
+            <div class="do-panel" id="do-panel">
+                <div class="do-item" onclick="toggleDOAll(event)">
+                    <input type="checkbox" id="do-opt-all">
+                    <label for="do-opt-all">All dining options</label>
+                </div>
+                <div class="do-divider"></div>
+                {% for opt in dining_options %}
+                <div class="do-item" onclick="toggleDOOpt(event)">
+                    <input type="checkbox"
+                           name="dining_option"
+                           value="{{ opt.guid }}"
+                           id="do-opt-{{ loop.index }}"
+                           {% if opt.guid in dining_option_guids %}checked{% endif %}>
+                    <label for="do-opt-{{ loop.index }}">{{ opt.name }}</label>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <button class="filter-btn" type="submit">APPLY</button>
+        <a class="filter-btn filter-btn--ghost" href="/store">RESET</a>
+    </form>
+
+    <div class="totals-bar">
+        <div class="total-chip total-chip--grand">
+            <span class="total-chip__label">GRAND TOTAL</span>
+            <span class="total-chip__value">{{ grand_total }}</span>
+        </div>
+        <a id="store-print-link"
+           href="/store/print?start={{ start_date }}&end={{ end_date }}{% for g in selected_locations %}&location={{ g }}{% endfor %}{% for g in dining_option_guids %}&dining_option={{ g }}{% endfor %}"
+           class="filter-btn filter-btn--ghost" target="_blank">PRINT VIEW</a>
+    </div>
+    </div>
+</div>
+
+{# ── Schedule Body ───────────────────────────────────────────────────────────── #}
+{% if not grouped %}
+<div class="empty-state">
+    <p>No catering orders found for this date range.</p>
+</div>
+{% else %}
+
+{% for location, data in grouped.items() %}
+<div class="location-block" style="margin:16px;">
+    <div class="location-header">
+        <h2 class="location-name">
+            {{ location.upper() }}
+            <span class="location-total-inline">{{ data.location_total }}</span>
+        </h2>
+        <span class="location-count">{{ data.orders|length }} ORDER{{ 's' if data.orders|length != 1 }}</span>
+    </div>
+
+    <div class="table-wrapper">
+        <table class="schedule-table">
+            <thead>
+                <tr>
+                    <th class="col-date">DATE</th>
+                    <th class="col-day">DAY</th>
+                    <th class="col-svc">SERVICE</th>
+                    <th class="col-travel">TRAVEL</th>
+                    <th class="col-time">DEPART</th>
+                    <th class="col-time">ARRIVAL</th>
+                    <th class="col-dur">DURATION</th>
+                    <th class="col-time">RETURN</th>
+                    <th class="col-total">TOTAL</th>
+                    <th class="col-emp">#EMP</th>
+                    <th class="col-driver">DRIVER</th>
+                    <th class="col-customer">CUSTOMER</th>
+                    <th class="col-company">COMPANY</th>
+                    <th class="col-map"></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for order in data.orders %}
+            <tr class="order-row">
+                <td class="col-date">{{ order.display_date }}</td>
+                <td class="col-day">{{ order.display_day }}</td>
+                <td class="col-svc">{{ order.service_type or '' }}</td>
+                <td class="col-travel">{{ order.travel_time or '' }}</td>
+                <td class="col-time">
+                    {% if order.departure_time %}{{ order.departure_time.strftime('%I:%M %p') }}{% endif %}
+                </td>
+                <td class="col-time">
+                    {% if order.arrival_time %}{{ order.arrival_time.strftime('%I:%M %p') }}{% endif %}
+                </td>
+                <td class="col-dur">{{ order.duration or '' }}</td>
+                <td class="col-time">
+                    {% if order.return_time %}{{ order.return_time.strftime('%I:%M %p') }}{% endif %}
+                </td>
+                <td class="col-total">{{ order.display_total }}</td>
+                <td class="col-emp" style="text-align:center;">{{ order.num_employees or '' }}</td>
+                <td class="col-driver">{{ order.driver_assigned or '' }}</td>
+                <td class="col-customer">{{ order.customer_first or '' }} {{ order.customer_last or '' }}</td>
+                <td class="col-company">{{ order.event_company or '' }}</td>
+                <td class="col-map">
+                    <button class="map-btn" onclick="openMap('{{ order.order_guid }}')" title="View map">&#128506;</button>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endfor %}
+{% endif %}
+
+<script>
+// ── Location dropdown ─────────────────────────────────────────────────────────
+function updateLocLabel() {
+    const checked = [...document.querySelectorAll('#loc-panel input[name="location"]:checked')];
+    const label   = document.getElementById('loc-label');
+    const badge   = document.getElementById('loc-count');
+    const allCb   = document.getElementById('loc-opt-all');
+
+    if (checked.length === 0) {
+        label.textContent   = 'All locations';
+        badge.style.display = 'none';
+        allCb.checked       = true;
+    } else if (checked.length === 1) {
+        label.textContent   = checked[0].nextElementSibling.textContent.trim();
+        badge.style.display = 'none';
+        allCb.checked       = false;
+    } else {
+        label.textContent   = checked[0].nextElementSibling.textContent.trim();
+        badge.textContent   = checked.length;
+        badge.style.display = 'inline-flex';
+        allCb.checked       = false;
+    }
+}
+
+function toggleLocPanel(e) {
+    e.stopPropagation();
+    const panel = document.getElementById('loc-panel');
+    panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+}
+
+function toggleLocOpt(e) {
+    const cb = e.currentTarget.querySelector('input[type=checkbox]');
+    if (e.target !== cb) cb.checked = !cb.checked;
+    document.getElementById('loc-opt-all').checked = false;
+    updateLocLabel();
+}
+
+function toggleLocAll(e) {
+    const allCb = document.getElementById('loc-opt-all');
+    if (e.target !== allCb) allCb.checked = !allCb.checked;
+    if (allCb.checked) {
+        document.querySelectorAll('#loc-panel input[name="location"]')
+            .forEach(c => c.checked = false);
+    }
+    updateLocLabel();
+}
+
+// ── Dining option dropdown ────────────────────────────────────────────────────
+function updateDOLabel() {
+    const checked = [...document.querySelectorAll('#do-panel input[name="dining_option"]:checked')];
+    const label   = document.getElementById('do-label');
+    const badge   = document.getElementById('do-count');
+    const allCb   = document.getElementById('do-opt-all');
+
+    if (checked.length === 0) {
+        label.textContent   = 'All dining options';
+        badge.style.display = 'none';
+        allCb.checked       = true;
+    } else if (checked.length === 1) {
+        label.textContent   = checked[0].nextElementSibling.textContent.trim();
+        badge.style.display = 'none';
+        allCb.checked       = false;
+    } else {
+        label.textContent   = checked[0].nextElementSibling.textContent.trim();
+        badge.textContent   = checked.length;
+        badge.style.display = 'inline-flex';
+        allCb.checked       = false;
+    }
+}
+
+function toggleDOPanel(e) {
+    e.stopPropagation();
+    const panel = document.getElementById('do-panel');
+    panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+}
+
+function toggleDOOpt(e) {
+    const cb = e.currentTarget.querySelector('input[type=checkbox]');
+    if (e.target !== cb) cb.checked = !cb.checked;
+    document.getElementById('do-opt-all').checked = false;
+    updateDOLabel();
+}
+
+function toggleDOAll(e) {
+    const allCb = document.getElementById('do-opt-all');
+    if (e.target !== allCb) allCb.checked = !allCb.checked;
+    if (allCb.checked) {
+        document.querySelectorAll('#do-panel input[name="dining_option"]')
+            .forEach(c => c.checked = false);
+    }
+    updateDOLabel();
+}
+
+// Close panels when clicking outside
+document.addEventListener('click', e => {
+    if (!document.getElementById('loc-wrapper').contains(e.target))
+        document.getElementById('loc-panel').style.display = 'none';
+    if (!document.querySelector('.do-wrapper:not(#loc-wrapper)').contains(e.target))
+        document.getElementById('do-panel').style.display = 'none';
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+    updateLocLabel();
+    updateDOLabel();
+});
+</script>
+
+{# ── Map Modal ───────────────────────────────────────────────────────────────── #}
+<div id="map-modal-overlay" class="map-overlay" style="display:none;" onclick="closeMap(event)">
+    <div class="map-modal" onclick="event.stopPropagation()">
+        <div class="map-modal-header">
+            <div>
+                <div class="map-modal-title" id="map-title">Route</div>
+                <div class="map-modal-sub" id="map-sub"></div>
+            </div>
+            <button class="map-close-btn" onclick="closeMap()" title="Close">&#10005;</button>
+        </div>
+        <div class="map-addresses" id="map-addresses"></div>
+        <div id="map-container" style="height:600px;width:100%;"></div>
+        <div class="map-stats" id="map-stats"></div>
+        <div class="map-modal-footer">
+            <span class="map-footer-note" id="map-note"></span>
+            <div style="display:flex;gap:8px;">
+                <button class="filter-btn filter-btn--ghost" onclick="openInMaps()">OPEN IN MAPS</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let leafletMap  = null;
+let currentData = null;
+
+async function openMap(guid) {
+    const overlay = document.getElementById('map-modal-overlay');
+    overlay.style.display = 'flex';
+    document.getElementById('map-title').textContent = 'Loading route...';
+    document.getElementById('map-sub').textContent   = '';
+    document.getElementById('map-addresses').innerHTML = '';
+    document.getElementById('map-stats').innerHTML   = '';
+    document.getElementById('map-note').textContent  = '';
+
+    try {
+        const resp = await fetch(`/map/${guid}`);
+        const d    = await resp.json();
+        currentData = d;
+
+        document.getElementById('map-title').textContent = `${d.store.name} \u2192 Delivery`;
+        document.getElementById('map-sub').textContent   = `${d.display_date}  ·  ${d.customer}  ·  ${d.total}`;
+
+        document.getElementById('map-addresses').innerHTML = `
+            <div class="map-addr-row">
+                <div class="map-addr-item">
+                    <span class="map-pin map-pin--store"></span>
+                    <div>
+                        <div class="map-addr-name">${d.store.name}</div>
+                        <div class="map-addr-text">${d.store.address || ''}</div>
+                    </div>
+                </div>
+                <div class="map-addr-divider"></div>
+                <div class="map-addr-item">
+                    <span class="map-pin map-pin--delivery"></span>
+                    <div>
+                        <div class="map-addr-name">Delivery address</div>
+                        <div class="map-addr-text">${d.delivery.address || 'No address on file'}</div>
+                    </div>
+                </div>
+            </div>`;
+
+        if (d.travel_minutes !== null) {
+            const hours = Math.floor(d.travel_minutes / 60);
+            const mins  = d.travel_minutes % 60;
+            const tStr  = hours > 0 ? `${hours}h ${mins}m` : `${mins} min`;
+            document.getElementById('map-stats').innerHTML = `
+                <div class="map-stat"><div class="map-stat-label">EST. DISTANCE</div><div class="map-stat-value">${d.distance_miles} mi</div></div>
+                <div class="map-stat"><div class="map-stat-label">EST. TRAVEL</div><div class="map-stat-value">${tStr}</div></div>`;
+        } else {
+            document.getElementById('map-stats').innerHTML =
+                `<div class="map-stat"><div class="map-stat-label">TRAVEL TIME</div><div class="map-stat-value">No coordinates available</div></div>`;
+        }
+
+        document.getElementById('map-note').textContent = d.delivery.geocoded
+            ? 'Address was geocoded and saved'
+            : d.routed ? 'Driving time via OpenRouteService' : 'Estimate based on straight-line distance';
+
+        initMap(d);
+        setTimeout(() => { if (leafletMap) leafletMap.invalidateSize(); }, 100);
+
+    } catch (e) {
+        document.getElementById('map-title').textContent = 'Error loading map';
+        console.error(e);
+    }
+}
+
+function initMap(d) {
+    const container = document.getElementById('map-container');
+    if (leafletMap) { leafletMap.remove(); leafletMap = null; }
+
+    const hasStore    = d.store.lat !== null && d.store.lon !== null;
+    const hasDelivery = d.delivery.lat !== null && d.delivery.lon !== null;
+
+    if (!hasStore && !hasDelivery) {
+        container.innerHTML = '<div class="map-no-coords">No coordinates available.</div>';
+        return;
+    }
+
+    container.innerHTML = '';
+    const centerLat = hasDelivery ? d.delivery.lat : d.store.lat;
+    const centerLon = hasDelivery ? d.delivery.lon : d.store.lon;
+
+    leafletMap = L.map('map-container').setView([centerLat, centerLon], 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '\u00a9 <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 18,
+    }).addTo(leafletMap);
+
+    const storeIcon = L.divIcon({
+        html: '<div style="width:14px;height:14px;background:#1a5fa8;border:2.5px solid white;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.4)"></div>',
+        className: '', iconAnchor: [7, 7]
+    });
+    const deliveryIcon = L.divIcon({
+        html: '<div style="width:14px;height:14px;background:#c8392b;border:2.5px solid white;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.4)"></div>',
+        className: '', iconAnchor: [7, 7]
+    });
+
+    const bounds = [];
+    if (hasStore) {
+        L.marker([d.store.lat, d.store.lon], {icon: storeIcon})
+         .addTo(leafletMap)
+         .bindPopup(`<strong>${d.store.name}</strong><br>${d.store.address || ''}`);
+        bounds.push([d.store.lat, d.store.lon]);
+    }
+    if (hasDelivery) {
+        L.marker([d.delivery.lat, d.delivery.lon], {icon: deliveryIcon})
+         .addTo(leafletMap)
+         .bindPopup(`<strong>Delivery</strong><br>${d.delivery.address || ''}`);
+        bounds.push([d.delivery.lat, d.delivery.lon]);
+    }
+    if (hasStore && hasDelivery) {
+        if (d.route_geojson) {
+            L.geoJSON(d.route_geojson, { style: { color: '#1a5fa8', weight: 4, opacity: 0.8 } }).addTo(leafletMap);
+        } else {
+            L.polyline([[d.store.lat, d.store.lon], [d.delivery.lat, d.delivery.lon]], {
+                color: '#1a5fa8', weight: 3, opacity: 0.7, dashArray: '6 4'
+            }).addTo(leafletMap);
+        }
+    }
+    if (bounds.length > 1) leafletMap.fitBounds(bounds, {padding: [40, 40]});
+}
+
+function closeMap(e) {
+    if (e && e.target !== document.getElementById('map-modal-overlay')) return;
+    document.getElementById('map-modal-overlay').style.display = 'none';
+    if (leafletMap) { leafletMap.remove(); leafletMap = null; }
+    currentData = null;
+}
+
+function openInMaps() {
+    if (!currentData) return;
+    const origin = currentData.store.address;
+    const dest   = currentData.delivery.address;
+    if (origin && dest) {
+        window.open(`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(dest)}&travelmode=driving`, '_blank');
+    } else if (dest) {
+        window.open(`https://maps.google.com/?q=${encodeURIComponent(dest)}`, '_blank');
+    }
+}
+</script>
+{% endblock %}

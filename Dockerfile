@@ -15,4 +15,4 @@ COPY . .
 # is not suitable for production.
 # Workers: 2-4 is appropriate for a low-traffic internal tool.
 # Bind to 8000 to match Azure Container Apps expected port.
-CMD ["gunicorn", "--workers", "3", "--bind", "0.0.0.0:8000", "--timeout", "120", "app:app"]
+CMD ["gunicorn", "--workers", "4", "--bind", "0.0.0.0:8000", "--timeout", "120", "app:app"]
