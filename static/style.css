@@ -434,14 +434,17 @@ body {
     background: var(--bg-white);
     border: 1px solid var(--rule);
     width: 100%; max-width: 900px;
-    max-height: 90vh;
-    overflow-y: auto;
+    height: 90vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
 .map-modal-header {
     display: flex; align-items: flex-start; justify-content: space-between;
     padding: 12px 16px 10px;
     border-bottom: 1px solid var(--rule);
+    flex-shrink: 0;
 }
 
 .map-modal-title {
@@ -469,6 +472,7 @@ body {
     padding: 10px 16px;
     border-bottom: 1px solid var(--rule);
     background: var(--bg);
+    flex-shrink: 0;
 }
 
 .map-addr-item  { display: flex; align-items: flex-start; gap: 8px; flex: 1; }
@@ -480,11 +484,15 @@ body {
 .map-pin--store    { background: #1a5fa8; }
 .map-pin--delivery { background: var(--accent); }
 
+/* ── Map container grows to fill available space ───────────────────────────── */
+#map-container { flex: 1 1 auto; min-height: 0; }
+
 /* ── Stats bar ─────────────────────────────────────────────────────────────── */
 .map-stats {
     display: flex;
     border-top: 1px solid var(--rule);
     border-bottom: 1px solid var(--rule);
+    flex-shrink: 0;
 }
 
 .map-stat {
@@ -510,6 +518,7 @@ body {
 .map-modal-footer {
     display: flex; align-items: center; justify-content: space-between;
     padding: 10px 16px; gap: 8px;
+    flex-shrink: 0;
 }
 
 .map-footer-note {
@@ -518,7 +527,7 @@ body {
 }
 
 .map-no-coords {
-    height: 300px; display: flex; align-items: center; justify-content: center;
+    flex: 1; display: flex; align-items: center; justify-content: center;
     font-family: var(--font-display); font-size: 13px;
     letter-spacing: 0.06em; color: var(--ink-light);
     background: var(--bg);

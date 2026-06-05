@@ -111,6 +111,7 @@
         <table class="schedule-table">
             <thead>
                 <tr>
+                    <th class="col-map"></th>
                     <th class="col-date">DATE</th>
                     <th class="col-day">DAY</th>
                     <th class="col-svc">SERVICE</th>
@@ -124,12 +125,14 @@
                     <th class="col-driver">DRIVER</th>
                     <th class="col-customer">CUSTOMER</th>
                     <th class="col-company">COMPANY</th>
-                    <th class="col-map"></th>
                 </tr>
             </thead>
             <tbody>
             {% for order in data.orders %}
             <tr class="order-row">
+                <td class="col-map">
+                    <button class="map-btn" onclick="openMap('{{ order.order_guid }}')" title="View map">&#128506;</button>
+                </td>
                 <td class="col-date">{{ order.display_date }}</td>
                 <td class="col-day">{{ order.display_day }}</td>
                 <td class="col-svc">{{ order.service_type or '' }}</td>
@@ -149,9 +152,6 @@
                 <td class="col-driver">{{ order.driver_assigned or '' }}</td>
                 <td class="col-customer">{{ order.customer_first or '' }} {{ order.customer_last or '' }}</td>
                 <td class="col-company">{{ order.event_company or '' }}</td>
-                <td class="col-map">
-                    <button class="map-btn" onclick="openMap('{{ order.order_guid }}')" title="View map">&#128506;</button>
-                </td>
             </tr>
             {% endfor %}
             </tbody>
@@ -279,7 +279,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <button class="map-close-btn" onclick="closeMap()" title="Close">&#10005;</button>
         </div>
         <div class="map-addresses" id="map-addresses"></div>
-        <div id="map-container" style="height:600px;width:100%;"></div>
+        <div id="map-container" style="width:100%;"></div>
         <div class="map-stats" id="map-stats"></div>
         <div class="map-modal-footer">
             <span class="map-footer-note" id="map-note"></span>

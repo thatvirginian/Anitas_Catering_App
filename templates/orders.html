@@ -15,7 +15,8 @@
             <label class="filter-label">TO</label>
             <input class="filter-input" type="date" name="end" value="{{ end_date }}">
         </div>
-
+        <button class="filter-btn" type="submit">APPLY</button>
+        <a class="filter-btn filter-btn--ghost" href="/schedule">RESET</a>
 
         <div class="filter-group do-wrapper">
             <label class="filter-label">DINING OPTION</label>
@@ -44,8 +45,6 @@
                 {% endfor %}
             </div>
         </div>
-        <button class="filter-btn" type="submit">APPLY</button>
-        <a class="filter-btn filter-btn--ghost" href="/schedule">RESET</a>
     </form>
 
     {# ── Route Toggle ──────────────────────────────────────────────────────── #}
@@ -62,7 +61,6 @@
             <span class="total-chip__value">{{ amount }}</span>
         </div>
         {% endfor %}
-        <a id="print-link" href="{{ url_for('print_view') }}?start={{ start_date }}&end={{ end_date }}&route=both{% for g in dining_option_guids %}&dining_option={{ g }}{% endfor %}" class="filter-btn filter-btn--ghost" target="_blank">PRINT VIEW</a>
     </div>
 </div>
 
@@ -390,7 +388,7 @@ document.addEventListener('DOMContentLoaded', updateDOLabel);
             <button class="map-close-btn" onclick="closeMap()" title="Close">✕</button>
         </div>
         <div class="map-addresses" id="map-addresses"></div>
-        <div id="map-container" style="height:450px;width:100%;"></div>
+        <div id="map-container" style="width:100%;"></div>
         <div class="map-stats" id="map-stats"></div>
         <div class="map-modal-footer">
             <span class="map-footer-note" id="map-note"></span>
