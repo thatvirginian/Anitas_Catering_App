@@ -834,7 +834,6 @@ def manage_drivers():
 
             d["dob"]            = to_date_str(d.get("dob"))
             d["last_completed"] = to_date_str(d.get("last_completed"))
-            print(f"[DRIVER] id={d['id']} dob={d['dob']} last_completed={d['last_completed']}")
             drivers_list.append(d)
 
         # 3. Fetch all current driver-location assignments
