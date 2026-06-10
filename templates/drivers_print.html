@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Active Driver List</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Barlow', sans-serif;
+            font-size: 9pt; color: #111;
+            background: #fff; padding: 12mm 10mm;
+        }
+
+        .print-header {
+            display: flex; justify-content: space-between; align-items: flex-end;
+            border-bottom: 3px solid #111;
+            padding-bottom: 6pt; margin-bottom: 14pt;
+        }
+
+        .print-title {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 22pt; font-weight: 800;
+            letter-spacing: 0.02em; text-transform: uppercase; line-height: 1;
+        }
+
+        .print-meta {
+            text-align: right; font-family: 'DM Mono', monospace;
+            font-size: 8pt; color: #555; line-height: 1.6;
+        }
+
+        .location-block { page-break-inside: avoid; break-inside: avoid; margin-bottom: 16pt; }
+
+        .location-header {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 12pt; font-weight: 800;
+            letter-spacing: 0.1em; text-transform: uppercase;
+            background: #111; color: #fff;
+            padding: 3pt 8pt; margin-bottom: 4pt;
+            page-break-after: avoid; break-after: avoid;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+
+        .location-count {
+            font-family: 'DM Mono', monospace;
+            font-size: 8pt; color: #aaa;
+        }
+
+        table { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
+        thead tr { border-bottom: 1px solid #111; }
+
+        th {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-weight: 700; font-size: 7.5pt;
+            letter-spacing: 0.05em; text-transform: uppercase;
+            text-align: left; padding: 2pt 6pt; white-space: nowrap;
+            background: #f5f5f5;
+        }
+
+        td {
+            padding: 3pt 6pt; vertical-align: middle;
+            border-bottom: 0.5px solid #ddd;
+        }
+
+        tr { page-break-inside: avoid; break-inside: avoid; }
+        tr:last-child td { border-bottom: none; }
+
+        .mono { font-family: 'DM Mono', monospace; font-size: 8pt; }
+
+        .check { color: #2a7a3a; font-weight: 700; }
+        .cross { color: #c8392b; font-weight: 700; }
+        .inactive-row { opacity: 0.5; }
+
+        .col-name  { width: 30%; }
+        .col-loc   { width: 18%; }
+        .col-id    { width: 8%; text-align: center; }
+        .col-auth  { width: 8%; text-align: center; }
+        .col-mvr   { width: 8%; text-align: center; }
+        .col-date  { width: 14%; }
+        .col-status { width: 8%; }
+
+        .totals-summary {
+            margin-top: 16pt; border-top: 2px solid #111;
+            padding-top: 8pt; display: flex; gap: 24pt;
+        }
+
+        .total-item { font-family: 'DM Mono', monospace; font-size: 9pt; }
+        .total-item__label {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-weight: 700; font-size: 8pt;
+            letter-spacing: 0.08em; text-transform: uppercase;
+            display: block; color: #555;
+        }
+        .total-item__value { font-size: 13pt; font-weight: 500; }
+
+        .print-footer {
+            margin-top: 12pt; font-size: 7pt; color: #999;
+            border-top: 0.5px solid #ccc; padding-top: 6pt;
+            font-family: 'DM Mono', monospace;
+        }
+
+        @media print {
+            body { padding: 8mm; }
+            .no-print { display: none; }
+            @page { margin: 8mm; size: portrait; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="print-header">
+    <div class="print-title">
+        {{ 'Driver List' if not include_inactive else 'Driver List — All' }}
+    </div>
+    <div class="print-meta">
+        {{ 'Active Drivers Only' if not include_inactive else 'Active + Inactive' }}<br>
+        Printed: {{ now }}
+    </div>
+</div>
+
+<div class="no-print" style="margin-bottom:12pt; display:flex; gap:8pt; align-items:center;">
+    <button onclick="window.print()"
+            style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11pt;
+                   letter-spacing:0.08em;text-transform:uppercase;padding:6pt 18pt;
+                   background:#111;color:#fff;border:none;cursor:pointer;">
+        PRINT / SAVE PDF
+    </button>
+    <button onclick="window.close()"
+            style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11pt;
+                   letter-spacing:0.08em;text-transform:uppercase;padding:6pt 18pt;
+                   background:#fff;color:#111;border:1.5px solid #111;cursor:pointer;">
+        CLOSE
+    </button>
+    {% if not include_inactive %}
+    <a href="?inactive=true"
+       style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10pt;
+              letter-spacing:0.08em;text-transform:uppercase;padding:6pt 14pt;
+              background:#fff;color:#555;border:1.5px solid #ccc;text-decoration:none;cursor:pointer;">
+        INCLUDE INACTIVE
+    </a>
+    {% else %}
+    <a href="?"
+       style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10pt;
+              letter-spacing:0.08em;text-transform:uppercase;padding:6pt 14pt;
+              background:#fff;color:#555;border:1.5px solid #ccc;text-decoration:none;cursor:pointer;">
+        ACTIVE ONLY
+    </a>
+    {% endif %}
+</div>
+
+{% set total_drivers = namespace(count=0) %}
+{% for location, drivers in grouped.items() %}
+{% set total_drivers.count = total_drivers.count + drivers|length %}
+<div class="location-block">
+    <div class="location-header">
+        <span>{{ location.upper() }}</span>
+        <span class="location-count">{{ drivers|length }} DRIVER{{ 's' if drivers|length != 1 }}</span>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th class="col-name">Name</th>
+                <th class="col-id" style="text-align:center;">ID</th>
+                <th class="col-auth" style="text-align:center;">AUTH</th>
+                <th class="col-mvr" style="text-align:center;">MVR</th>
+                <th class="col-date">Last Completed</th>
+                {% if include_inactive %}<th class="col-status">Status</th>{% endif %}
+            </tr>
+        </thead>
+        <tbody>
+        {% for d in drivers %}
+        <tr {% if not d.active %}class="inactive-row"{% endif %}>
+            <td class="col-name">
+                <strong>{{ d.nickname or d.full_name }}</strong>
+                {% if d.nickname and d.nickname != d.full_name %}
+                <br><span style="font-size:7.5pt;color:#888;">{{ d.full_name }}</span>
+                {% endif %}
+            </td>
+            <td class="col-id" style="text-align:center;">
+                {% if d.has_id %}<span class="check">✓</span>{% else %}<span class="cross">✗</span>{% endif %}
+            </td>
+            <td class="col-auth" style="text-align:center;">
+                {% if d.has_auth %}<span class="check">✓</span>{% else %}<span class="cross">✗</span>{% endif %}
+            </td>
+            <td class="col-mvr" style="text-align:center;">
+                {% if d.has_mvr %}<span class="check">✓</span>{% else %}<span class="cross">✗</span>{% endif %}
+            </td>
+            <td class="col-date mono">{{ d.last_completed or '—' }}</td>
+            {% if include_inactive %}
+            <td class="col-status">{{ 'Active' if d.active else 'Inactive' }}</td>
+            {% endif %}
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endfor %}
+
+<div class="totals-summary">
+    <div class="total-item">
+        <span class="total-item__label">Total Drivers</span>
+        <span class="total-item__value">{{ total_drivers.count }}</span>
+    </div>
+    <div class="total-item">
+        <span class="total-item__label">Locations</span>
+        <span class="total-item__value">{{ grouped|length }}</span>
+    </div>
+</div>
+
+<div class="print-footer">
+    Generated by Catering Ops &nbsp;·&nbsp; {{ now }}
+</div>
+
+</body>
+</html>

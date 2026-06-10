@@ -7,8 +7,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}">
     <style>
         .home-header {
             position: sticky; top: 0; z-index: 100;
@@ -58,7 +58,7 @@
         .home-hero-eyebrow {
             font-family: var(--font-mono);
             font-size: 11px; letter-spacing: 0.16em;
-            color: #ffff00; text-transform: uppercase;
+            color: var(--accent); text-transform: uppercase;
             margin-bottom: 10px;
         }
 
@@ -177,7 +177,7 @@
 
 <header class="home-header">
     <div class="home-header-brand">
-        <img src="https://d3ciwvs59ifrt8.cloudfront.net/9cf1ec9b-d1e5-446e-bba8-79268b0d6b88/a2c61101-ffed-487e-9e8e-1248ae3a4cb7.png"
+        <img src="{{ url_for('static', filename='anitas_logo.png') }}"
              alt="Anita's" class="home-logo">
         <span class="home-header-divider">|</span>
         <span class="home-header-sub">CATERING OPS</span>
@@ -186,7 +186,7 @@
 </header>
 
 <div class="home-hero">
-    <div class="home-hero-eyebrow">Anita's New Mexico Style Grill</div>
+    <div class="home-hero-eyebrow">Anita's Mexican Grille</div>
     <div class="home-hero-title">Catering Ops</div>
     <div class="home-hero-sub">Internal operations tools for the catering department.</div>
 </div>
@@ -227,6 +227,20 @@
             across the catering operation.
         </div>
     </div>
+
+    {% if user.is_admin %}
+    <a href="{{ url_for('admin') }}" class="home-card" style="border-top: 3px solid var(--accent);">
+        <span class="home-card-tag" style="border-color:#c8392b;color:#c8392b;background:#fdf0f0;">ADMIN</span>
+        <div class="home-card-icon">⚙️</div>
+        <div class="home-card-label">Administration</div>
+        <div class="home-card-title">Admin Panel</div>
+        <div class="home-card-desc">
+            Manage drivers, client types, and system configuration.
+            Restricted to authorized administrators only.
+        </div>
+        <div class="home-card-arrow">OPEN →</div>
+    </a>
+    {% endif %}
 
 </div>
 

@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, abort, g
 from sqlalchemy import text
 from datetime import datetime, date, timedelta
+from functools import wraps
+import base64
+import json
 import logging
 import math
 import os
@@ -16,6 +19,59 @@ engine = get_engine()
 
 GEOCODIO_API_KEY = os.getenv("GEOCODIO_API_KEY")
 ORS_API_KEY      = os.getenv("ORS_API_KEY")
+
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+
+@app.before_request
+def load_user():
+    """Decode EasyAuth principal once per request and store on g.user."""
+    user_id = request.headers.get("X-Ms-Client-Principal-Id")
+
+    if not user_id:
+        # Local dev — no EasyAuth headers present
+        g.user = {"user_id": "dev", "username": "dev@local", "roles": ["admin"], "is_admin": True}
+        return
+
+    roles = []
+    principal_encoded = request.headers.get("X-Ms-Client-Principal")
+    if principal_encoded:
+        try:
+            principal = json.loads(base64.b64decode(principal_encoded))
+            roles = [
+                c["val"] for c in principal.get("claims", [])
+                if c.get("typ") == "roles"
+            ]
+        except Exception as e:
+            logger.warning(f"Failed to decode X-Ms-Client-Principal: {e}")
+
+    g.user = {
+        "user_id":  user_id,
+        "username": request.headers.get("X-Ms-Client-Principal-Name", ""),
+        "roles":    roles,
+        "is_admin": "admin" in roles,
+    }
+
+
+@app.context_processor
+def inject_user():
+    """Make g.user available as 'user' in every template automatically."""
+    return {"user": g.user}
+
+
+def role_required(*roles):
+    """
+    Decorator that checks g.user has at least one of the required roles.
+    Usage: @role_required("admin")  or  @role_required("admin", "gm")
+    """
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            if not any(role in g.user["roles"] for role in roles):
+                abort(403)
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -173,6 +229,18 @@ def _get_client_types():
     return [r["name"] for r in rows]
 
 
+def to_date_str(val):
+    """Convert a date/datetime/string to YYYY-MM-DD string or None."""
+    if val is None:
+        return None
+    if hasattr(val, 'isoformat'):
+        return val.isoformat()[:10]
+    s = str(val).strip()
+    if len(s) >= 10 and s[4] == '-':
+        return s[:10]
+    return None
+
+
 def _get_drivers_by_location():
     """
     Returns a dict of {location_id (str): [driver display names]}
@@ -218,6 +286,7 @@ def _get_store_orders(start_date, end_date, location_guids=None, dining_option_g
         SELECT
             oh.order_guid,
             oh.estimated_fulfillment_date,
+            oh.location_id::text AS location_id,
             l.location_name,
             l.route,
 
@@ -319,7 +388,6 @@ def _get_orders(start_date, end_date, dining_option_guids=None):
             l.location_name,
             l.route,
             l.abbreviation,
-            l.store_guid,
 
             -- Customer name and total from first check
             UPPER(oc.customer_first) AS customer_first,
@@ -430,6 +498,11 @@ def home():
     return render_template("home.html", year=datetime.now().year)
 
 
+@app.route("/admin")
+@role_required("admin")
+def admin():
+    return render_template("admin.html")
+
 
 @app.route("/schedule")
 def index():
@@ -474,7 +547,10 @@ def index():
 
 @app.route("/save/<order_guid>", methods=["POST"])
 def save_order(order_guid):
-    """Upsert catering_details for one order."""
+    """Upsert catering_details for one order.
+    Only updates fields that are present in the payload — missing fields
+    are not overwritten, allowing partial saves (e.g. driver only).
+    """
     data = request.get_json(force=True)
 
     def t(val):
@@ -492,47 +568,44 @@ def save_order(order_guid):
         except (TypeError, ValueError):
             return None
 
-    sql = text("""
-            INSERT INTO catering_details (
-                order_guid, service_type, travel_time, departure_time,
-                arrival_time, duration, return_time, num_employees,
-                driver_assigned, event_company, client_type, notes, last_updated
-            ) VALUES (
-                :order_guid, :service_type, :travel_time, :departure_time,
-                :arrival_time, :duration, :return_time, :num_employees,
-                :driver_assigned, :event_company, :client_type, :notes, NOW()
-            )
-            ON CONFLICT (order_guid) DO UPDATE SET
-                service_type    = EXCLUDED.service_type,
-                travel_time     = EXCLUDED.travel_time,
-                departure_time  = EXCLUDED.departure_time,
-                arrival_time    = EXCLUDED.arrival_time,
-                duration        = EXCLUDED.duration,
-                return_time     = EXCLUDED.return_time,
-                num_employees   = EXCLUDED.num_employees,
-                driver_assigned = EXCLUDED.driver_assigned,
-                event_company   = EXCLUDED.event_company,
-                client_type     = EXCLUDED.client_type,  -- <-- Add this line
-                notes           = EXCLUDED.notes,
-                last_updated    = NOW()
-        """)
+    # All possible fields with their processed values
+    all_fields = {
+        "service_type":   data.get("service_type"),
+        "travel_time":    data.get("travel_time"),
+        "departure_time": t(data.get("departure_time")),
+        "arrival_time":   t(data.get("arrival_time")),
+        "duration":       data.get("duration"),
+        "return_time":    t(data.get("return_time")),
+        "num_employees":  i(data.get("num_employees")),
+        "driver_assigned":data.get("driver_assigned"),
+        "event_company":  data.get("event_company"),
+        "client_type":    data.get("client_type"),
+        "notes":          data.get("notes"),
+    }
+
+    # Only include fields that were explicitly sent in the payload
+    sent_fields = {k: v for k, v in all_fields.items() if k in data}
+
+    if not sent_fields:
+        return jsonify({"status": "ok"})
+
+    # Build dynamic UPDATE SET — only update what was sent
+    update_set = ", ".join(f"{k} = EXCLUDED.{k}" for k in sent_fields)
+    insert_cols = ", ".join(["order_guid"] + list(sent_fields.keys()) + ["last_updated"])
+    insert_vals = ", ".join([":order_guid"] + [f":{k}" for k in sent_fields] + ["NOW()"])
+
+    sql = text(f"""
+        INSERT INTO catering_details ({insert_cols})
+        VALUES ({insert_vals})
+        ON CONFLICT (order_guid) DO UPDATE SET
+            {update_set},
+            last_updated = NOW()
+    """)
 
     try:
         with engine.begin() as conn:
-            conn.execute(sql, {
-                "order_guid":      order_guid,
-                "service_type":    data.get("service_type"),
-                "travel_time":     data.get("travel_time"),
-                "departure_time":  t(data.get("departure_time")),
-                "arrival_time":    t(data.get("arrival_time")),
-                "duration":        data.get("duration"),
-                "return_time":     t(data.get("return_time")),
-                "num_employees":   i(data.get("num_employees")),
-                "driver_assigned": data.get("driver_assigned"),
-                "event_company":   data.get("event_company"),
-                "client_type":     data.get("client_type"),
-                "notes":           data.get("notes"),
-            })
+            params = {"order_guid": order_guid, **sent_fields}
+            conn.execute(sql, params)
         return jsonify({"status": "ok"})
     except Exception as e:
         logger.error(f"Save failed for {order_guid}: {e}")
@@ -749,6 +822,7 @@ def store():
         selected_locations    = selected_locations,
         dining_options        = dining_options,
         dining_option_guids   = selected_dining_guids,
+        drivers_by_location   = _get_drivers_by_location(),
     )
 
 
@@ -822,17 +896,6 @@ def manage_drivers():
         drivers_list = []
         for r in drivers_rows:
             d = dict(r)
-            def to_date_str(val):
-                if val is None:
-                    return None
-                if hasattr(val, 'isoformat'):
-                    return val.isoformat()[:10]  # handles both date and datetime
-                # Already a string — extract YYYY-MM-DD if possible
-                s = str(val).strip()
-                if len(s) >= 10 and s[4] == '-':
-                    return s[:10]
-                return None
-
             d["dob"]            = to_date_str(d.get("dob"))
             d["last_completed"] = to_date_str(d.get("last_completed"))
             drivers_list.append(d)
@@ -943,6 +1006,47 @@ def save_driver_locations():
     except Exception as e:
         logger.error(f"Failed to save driver locations: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/drivers/print")
+def print_drivers():
+    include_inactive = request.args.get("inactive", "false").lower() == "true"
+
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT
+                cd.full_name,
+                cd.nickname,
+                cd.location,
+                cd.has_id,
+                cd.has_auth,
+                cd.has_mvr,
+                cd.last_completed,
+                cd.active
+            FROM catering_drivers cd
+            WHERE cd.active = TRUE OR :include_inactive
+            ORDER BY cd.location, cd.full_name
+        """), {"include_inactive": include_inactive}).mappings().all()
+
+    # Group by location
+    grouped = {}
+    for row in rows:
+        loc = row["location"] or "Unassigned"
+        if loc not in grouped:
+            grouped[loc] = []
+        d = dict(row)
+        d["last_completed"] = to_date_str(d.get("last_completed"))
+        grouped[loc].append(d)
+
+    eastern = pytz.timezone("America/New_York")
+    now_et  = datetime.now(pytz.utc).astimezone(eastern).strftime("%m/%d/%Y %I:%M %p ET")
+
+    return render_template(
+        "drivers_print.html",
+        grouped          = grouped,
+        include_inactive = include_inactive,
+        now              = now_et,
+    )
 
 
 if __name__ == "__main__":

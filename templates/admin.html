@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel — Catering Ops</title>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .admin-header {
+            position: sticky; top: 0; z-index: 100;
+            height: 52px;
+            background: var(--ink);
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 24px;
+            border-bottom: 3px solid var(--accent);
+        }
+
+        .admin-header-brand { display: flex; align-items: center; gap: 10px; }
+        .admin-logo { height: 36px; width: auto; display: block; }
+        .admin-header-divider { color: var(--accent); font-size: 18px; }
+        .admin-header-sub {
+            font-family: var(--font-mono);
+            font-size: 10px; color: #999; letter-spacing: 0.12em;
+        }
+
+        .admin-header-nav { display: flex; gap: 4px; align-items: center; }
+        .admin-nav-link {
+            font-family: var(--font-display);
+            font-size: 12px; font-weight: 700;
+            letter-spacing: 0.1em; text-transform: uppercase;
+            text-decoration: none; color: #aaa;
+            padding: 6px 14px;
+            border: 1px solid transparent;
+            transition: all 0.15s;
+        }
+        .admin-nav-link:hover { color: #fff; border-color: #555; }
+
+        .admin-hero {
+            background: #1a1a1a;
+            color: #fff;
+            padding: 36px 40px 28px;
+            border-bottom: 1px solid #333;
+        }
+
+        .admin-hero-eyebrow {
+            font-family: var(--font-mono);
+            font-size: 10px; letter-spacing: 0.16em;
+            color: var(--accent); text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+
+        .admin-hero-title {
+            font-family: var(--font-display);
+            font-size: 36px; font-weight: 800;
+            letter-spacing: 0.02em; text-transform: uppercase;
+            line-height: 1; margin-bottom: 8px;
+        }
+
+        .admin-hero-sub {
+            font-family: var(--font-mono);
+            font-size: 11px; color: #777;
+        }
+
+        .admin-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 1px;
+            background: var(--rule);
+            border-top: 1px solid var(--rule);
+        }
+
+        .admin-card {
+            background: var(--bg-white);
+            padding: 24px 24px 20px;
+            text-decoration: none;
+            color: var(--ink);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            transition: background 0.15s;
+            position: relative;
+        }
+
+        .admin-card:hover { background: #faf9f6; }
+        .admin-card:hover .admin-card-arrow { opacity: 1; transform: translateX(0); }
+
+        .admin-card-icon { font-size: 24px; line-height: 1; margin-bottom: 2px; }
+
+        .admin-card-label {
+            font-family: var(--font-mono);
+            font-size: 9px; letter-spacing: 0.14em;
+            text-transform: uppercase; color: var(--ink-light);
+        }
+
+        .admin-card-title {
+            font-family: var(--font-display);
+            font-size: 20px; font-weight: 800;
+            letter-spacing: 0.03em; text-transform: uppercase;
+            line-height: 1.1;
+        }
+
+        .admin-card-desc {
+            font-family: var(--font-body);
+            font-size: 12px; color: var(--ink-mid);
+            line-height: 1.5; flex: 1;
+        }
+
+        .admin-card-arrow {
+            font-family: var(--font-display);
+            font-size: 11px; font-weight: 700;
+            letter-spacing: 0.1em; text-transform: uppercase;
+            color: var(--accent);
+            opacity: 0; transform: translateX(-4px);
+            transition: all 0.15s;
+            margin-top: 2px;
+        }
+
+        .admin-footer {
+            padding: 16px 40px;
+            border-top: 1px solid var(--rule);
+            font-family: var(--font-mono);
+            font-size: 10px; color: var(--ink-light);
+            display: flex; justify-content: space-between;
+        }
+    </style>
+</head>
+<body>
+
+<header class="admin-header">
+    <div class="admin-header-brand">
+        <img src="{{ url_for('static', filename='anitas_logo.png') }}"
+             alt="Anita's" class="admin-logo">
+        <span class="admin-header-divider">|</span>
+        <span class="admin-header-sub">ADMIN PANEL</span>
+    </div>
+    <nav class="admin-header-nav">
+        <a href="{{ url_for('home') }}" class="admin-nav-link">← HOME</a>
+        <a href="/.auth/logout" class="admin-nav-link">LOGOUT</a>
+    </nav>
+</header>
+
+<div class="admin-hero">
+    <div class="admin-hero-eyebrow">Administration</div>
+    <div class="admin-hero-title">Admin Panel</div>
+    <div class="admin-hero-sub">
+        Signed in as {{ user.username }}
+    </div>
+</div>
+
+<div class="admin-grid">
+
+    <a href="{{ url_for('manage_drivers') }}" class="admin-card">
+        <div class="admin-card-icon">🚗</div>
+        <div class="admin-card-label">Personnel</div>
+        <div class="admin-card-title">Driver Management</div>
+        <div class="admin-card-desc">
+            Add and manage approved catering drivers.
+            Assign drivers to store locations, track compliance documents.
+        </div>
+        <div class="admin-card-arrow">OPEN →</div>
+    </a>
+
+    <div class="admin-card" style="opacity:0.4;pointer-events:none;">
+        <div class="admin-card-icon">🏷️</div>
+        <div class="admin-card-label">Configuration</div>
+        <div class="admin-card-title">Client Types</div>
+        <div class="admin-card-desc">
+            Manage the list of catering client type options
+            available in the schedule.
+        </div>
+    </div>
+
+    <div class="admin-card" style="opacity:0.4;pointer-events:none;">
+        <div class="admin-card-icon">📍</div>
+        <div class="admin-card-label">Configuration</div>
+        <div class="admin-card-title">Locations</div>
+        <div class="admin-card-desc">
+            Manage store locations, coordinates,
+            and route assignments.
+        </div>
+    </div>
+
+</div>
+
+<div class="admin-footer">
+    <span>Anita's Catering Ops &nbsp;·&nbsp; Admin Panel &nbsp;·&nbsp; Restricted Access</span>
+    <span>{{ user.username }}</span>
+</div>
+
+</body>
+</html>
