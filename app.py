@@ -429,10 +429,21 @@ def _get_route_totals(grouped):
 def home():
     return render_template("home.html", year=datetime.now().year)
 
-@app.route("/debug/headers")
-def debug_headers():
-    headers = {k: v for k, v in request.headers}
-    return jsonify(headers)
+@app.route('/debug-token')
+def debug_token():
+    header_val = request.headers.get('X-Ms-Client-Principal')
+    if not header_val:
+        return "No identity header found. Are you logged in via Azure?", 400
+        
+    # Decode string
+    decoded_bytes = base64.b64decode(header_val)
+    decoded_json = json.loads(decoded_bytes.decode('utf-8'))
+    
+    # Generate pretty-printed string using 4-space indentation
+    pretty_string = json.dumps(decoded_json, indent=4)
+    
+    # Return it wrapped in a <pre> tag so it looks nice in your browser
+    return f"<pre>{pretty_string}</pre>"
 
 @app.route("/schedule")
 def index():
