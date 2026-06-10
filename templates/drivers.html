@@ -1,0 +1,375 @@
+{% extends "base.html" %}
+
+{% block title %}Driver Management{% endblock %}
+
+{% block content %}
+<style>
+    .admin-container { display: grid; grid-template-columns: 320px 1fr; gap: 20px; padding: 20px 0; font-family: var(--font-sans, sans-serif); }
+    .sidebar-panel { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 15px; display: flex; flex-direction: column; gap: 10px; }
+    .main-panel { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .editor-card { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 20px; }
+    .driver-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; max-height: 600px; }
+    .driver-item { padding: 10px; border: 1px solid #eee; border-radius: 4px; cursor: pointer; text-align: left; background: #fafafa; display: flex; justify-content: space-between; align-items: center; }
+    .driver-item:hover { background: #f0f4f8; }
+    .driver-item.active-item { background: #1a5fa8; color: #fff; border-color: #1a5fa8; }
+    .driver-item .status-dot { font-size: 10px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .form-group { display: flex; flex-direction: column; gap: 4px; }
+    .form-group.full-width { grid-column: span 2; }
+    .form-group label { font-size: 11px; font-weight: 600; color: #555; text-transform: uppercase; }
+    .form-control { padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
+    .checkbox-group { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
+    .store-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+    .store-item { display: flex; align-items: center; gap: 10px; padding: 8px; border-bottom: 1px solid #eee; font-size: 13px; }
+    .action-row { display: flex; justify-content: space-between; margin-top: 20px; }
+    .btn-save { background: #1a5fa8; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: 600; }
+    .btn-save:hover { background: #134882; }
+    .btn-add { background: #2e7d32; color: white; border: none; padding: 8px; border-radius: 4px; cursor: pointer; font-weight: 600; text-align: center; }
+    .filter-toggle { flex: 1; padding: 5px 8px; border: 1px solid #ddd; background: #f5f5f5; cursor: pointer; font-size: 11px; font-weight: 600; border-radius: 4px; color: #555; transition: all 0.15s; }
+    .filter-toggle:hover { background: #e8e8e8; }
+    .filter-toggle.active { background: #1a5fa8; color: #fff; border-color: #1a5fa8; }
+</style>
+
+<div class="admin-container">
+    <div class="sidebar-panel">
+        <button class="btn-add" onclick="createNewDriver()">+ ADD NEW DRIVER</button>
+        <hr style="border:0; border-top: 1px solid #eee; margin: 5px 0;">
+        <input type="text" id="driver-search" placeholder="Search drivers..."
+               style="padding:7px 10px; border:1px solid #ddd; border-radius:4px; font-size:12px; width:100%;"
+               oninput="filterDrivers()">
+        <div style="display:flex; gap:4px;">
+            <button class="filter-toggle active" id="toggle-active" onclick="setDriverFilter('active', this)">Active</button>
+            <button class="filter-toggle" id="toggle-inactive" onclick="setDriverFilter('inactive', this)">Inactive</button>
+            <button class="filter-toggle" id="toggle-all" onclick="setDriverFilter('all', this)">All</button>
+        </div>
+        <div class="driver-list" id="driver-list">
+            {% for d in drivers %}
+            <button class="driver-item"
+                    id="driver-btn-{{ d.id }}"
+                    data-driver='{{ d | tojson }}'
+                    data-assignments='{{ assignments.get(d.id, []) | tojson }}'
+                    onclick="editDriverFromBtn(this)">
+                <strong>{{ d.nickname or d.full_name }}</strong>
+                <span class="status-dot">{% if d.active %}● Active{% else %}○ Inactive{% endif %}</span>
+            </button>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="main-panel">
+        <div class="editor-card">
+            <h3 id="editor-title" style="margin-top:0; margin-bottom:15px; color:#1a5fa8;">Create New Profile</h3>
+            <form id="driver-form" onsubmit="submitDriverForm(event)">
+                <input type="hidden" name="id" id="field-id">
+                <div class="form-grid">
+                    <div class="form-group full-width">
+                        <label>Full Name *</label>
+                        <input type="text" class="form-control" name="full_name" id="field-full_name" required>
+                    </div>
+                    <div class="form-group">
+                        <label>First Name</label>
+                        <input type="text" class="form-control" name="first_name" id="field-first_name">
+                    </div>
+                    <div class="form-group">
+                        <label>Last Name</label>
+                        <input type="text" class="form-control" name="last_name" id="field-last_name">
+                    </div>
+                    <div class="form-group">
+                        <label>Nickname / Display Name</label>
+                        <input type="text" class="form-control" name="nickname" id="field-nickname" placeholder="Used in dropdowns">
+                    </div>
+                    <div class="form-group">
+                        <label>Gender</label>
+                        <select class="form-control" name="gender" id="field-gender">
+                            <option value="">— Select —</option>
+                            <option value="M">M</option>
+                            <option value="F">F</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>DOB</label>
+                        <input type="date" class="form-control" name="dob" id="field-dob">
+                    </div>
+                    <div class="form-group">
+                        <label>License Number</label>
+                        <input type="text" class="form-control" name="license_number" id="field-license_number">
+                    </div>
+                    <div class="form-group">
+                        <label>State</label>
+                        <select class="form-control" name="state" id="field-state">
+                            <option value="">— Select —</option>
+                            <option value="VA">VA</option>
+                            <option value="MD">MD</option>
+                            <option value="DC">DC</option>
+                            <option value="WV">WV</option>
+                            <option value="PA">PA</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Home Base Location</label>
+                        <select class="form-control" name="location" id="field-location" onchange="handleLocationChange()">
+                            <option value="">— Select Location —</option>
+                            {% for loc in locations %}
+                            <option value="{{ loc.name }}" data-route="{{ loc.route or '' }}">{{ loc.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Default Route Group (Auto-Filled)</label>
+                        <input type="text" class="form-control" name="route" id="field-route" readonly style="background: #f5f5f5; cursor: not-allowed;" placeholder="Select a location...">
+                    </div>
+                    <div class="form-group">
+                        <label>Last Compliance Audit</label>
+                        <input type="date" class="form-control" name="last_completed" id="field-last_completed">
+                    </div>
+                </div>
+
+                <h4 style="margin-bottom:5px; margin-top:20px; color:#555;">Document Verification Checklist</h4>
+                <div class="checkbox-group">
+                    <input type="checkbox" name="has_id" id="field-has_id">
+                    <label for="field-has_id">Valid Legal ID on File</label>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" name="has_auth" id="field-has_auth">
+                    <label for="field-has_auth">Background Check Authorization Passed</label>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" name="has_mvr" id="field-has_mvr">
+                    <label for="field-has_mvr">Motor Vehicle Record (MVR) Cleared</label>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" name="active" id="field-active" checked>
+                    <label for="field-active"><strong>Driver Profile Active</strong></label>
+                </div>
+
+                <div class="action-row">
+                    <span id="save-status-msg" style="font-weight:600; align-self:center;"></span>
+                    <button type="submit" class="btn-save">SAVE PROFILE</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="editor-card" id="location-assignment-card" style="display:none;">
+            <h3 style="margin-top:0; margin-bottom:5px; color:#1a5fa8;">Assigned Stores</h3>
+            <p style="font-size:12px; color:#666; margin-bottom:15px;">Check every store location where this driver is allowed to run assignments.</p>
+            <div class="store-list">
+                {% for loc in locations %}
+                <label class="store-item">
+                    <input type="checkbox" class="store-assign-cb" value="{{ loc.guid }}">
+                    <span>{{ loc.name }}</span>
+                </label>
+                {% endfor %}
+            </div>
+            <div class="action-row" style="justify-content: flex-end;">
+                <button type="button" class="btn-save" style="background:#2e7d32;" onclick="submitLocationAssignments()">UPDATE STORE ASSIGNMENTS</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let selectedDriverId = null;
+
+let currentFilter = 'active';
+
+function applyFilters() {
+    const search = document.getElementById('driver-search').value.toLowerCase().trim();
+    document.querySelectorAll('.driver-item').forEach(item => {
+        const isActive  = item.querySelector('.status-dot').textContent.includes('Active');
+        const name      = item.textContent.toLowerCase();
+        const matchStatus = currentFilter === 'all' ||
+                           (currentFilter === 'active' && isActive) ||
+                           (currentFilter === 'inactive' && !isActive);
+        const matchSearch = !search || name.includes(search);
+        item.style.display = (matchStatus && matchSearch) ? '' : 'none';
+    });
+}
+
+function filterDrivers() {
+    applyFilters();
+}
+
+function setDriverFilter(filter, btn) {
+    currentFilter = filter;
+    document.querySelectorAll('.filter-toggle').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    applyFilters();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    setDriverFilter('active', document.getElementById('toggle-active'));
+});
+
+function createNewDriver() {
+    selectedDriverId = null;
+    document.querySelectorAll('.driver-item').forEach(b => b.classList.remove('active-item'));
+    document.getElementById('driver-form').reset();
+    document.getElementById('field-id').value = '';
+    document.getElementById('field-active').checked = true;
+    document.getElementById('editor-title').textContent = 'Create New Profile';
+    document.getElementById('location-assignment-card').style.display = 'none';
+    document.getElementById('save-status-msg').textContent = '';
+}
+
+function editDriverFromBtn(btn) {
+    const driver      = JSON.parse(btn.dataset.driver);
+    const assignments = JSON.parse(btn.dataset.assignments);
+    editDriver(driver, assignments);
+}
+
+function editDriver(driver, assignedGuids) {
+    selectedDriverId = driver.id;
+    
+    // Highlight sidebar entry
+    document.querySelectorAll('.driver-item').forEach(b => b.classList.remove('active-item'));
+    document.getElementById(`driver-btn-${driver.id}`).classList.add('active-item');
+    
+    document.getElementById('editor-title').textContent = `Editing: ${driver.nickname || driver.full_name}`;
+    document.getElementById('save-status-msg').textContent = '';
+
+    // Populate Fields
+    document.getElementById('field-id').value = driver.id;
+    document.getElementById('field-full_name').value = driver.full_name || '';
+    document.getElementById('field-first_name').value = driver.first_name || '';
+    document.getElementById('field-last_name').value = driver.last_name || '';
+    document.getElementById('field-nickname').value = driver.nickname || '';
+    document.getElementById('field-gender').value = driver.gender || '';
+    document.getElementById('field-state').value = driver.state || '';
+    document.getElementById('field-location').value = driver.location || '';
+    handleLocationChange();
+    document.getElementById('field-route').value = driver.route || '';
+    document.getElementById('field-license_number').value = driver.license_number || '';
+    
+    // Dates (Slice away timestamps if applicable to fit input type="date")
+    document.getElementById('field-dob').value = driver.dob ? driver.dob.substring(0,10) : '';
+    document.getElementById('field-last_completed').value = driver.last_completed ? driver.last_completed.substring(0,10) : '';
+
+    // Booleans
+    document.getElementById('field-has_id').checked = !!driver.has_id;
+    document.getElementById('field-has_auth').checked = !!driver.has_auth;
+    document.getElementById('field-has_mvr').checked = !!driver.has_mvr;
+    document.getElementById('field-active').checked = !!driver.active;
+
+    // Open Location Card & Sync Checkboxes
+    document.getElementById('location-assignment-card').style.display = 'block';
+    document.querySelectorAll('.store-assign-cb').forEach(cb => {
+        cb.checked = assignedGuids.includes(cb.value);
+    });
+}
+
+async function submitDriverForm(e) {
+    e.preventDefault();
+    const form = document.getElementById('driver-form');
+    const formData = new FormData(form);
+    
+    // Package checkboxes manually to pass true boolean values
+    const payload = {
+        id: formData.get('id'),
+        full_name: formData.get('full_name'),
+        first_name: formData.get('first_name'),
+        last_name: formData.get('last_name'),
+        nickname: formData.get('nickname'),
+        gender: formData.get('gender'),
+        dob: formData.get('dob'),
+        state: formData.get('state'),
+        location: formData.get('location'),
+        route: formData.get('route'),
+        license_number: formData.get('license_number'),
+        last_completed: formData.get('last_completed'),
+        has_id: document.getElementById('field-has_id').checked,
+        has_auth: document.getElementById('field-has_auth').checked,
+        has_mvr: document.getElementById('field-has_mvr').checked,
+        active: document.getElementById('field-active').checked
+    };
+
+    const statusMsg = document.getElementById('save-status-msg');
+    statusMsg.textContent = 'SAVING...';
+    statusMsg.style.color = '#e65100';
+
+    try {
+        const resp = await fetch('/drivers/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const res = await resp.json();
+        if (res.status === 'ok') {
+            statusMsg.textContent = 'CHANGES SAVED!';
+            statusMsg.style.color = '#2e7d32';
+            // Reload page to refresh text definitions in sidebar lists
+            setTimeout(() => window.location.reload(), 1000);
+        } else {
+            statusMsg.textContent = 'ERROR SAVING';
+            statusMsg.style.color = '#c8392b';
+        }
+    } catch (err) {
+        statusMsg.textContent = 'CONNECTION ERROR';
+        statusMsg.style.color = '#c8392b';
+    }
+}
+
+async function submitLocationAssignments() {
+    if (!selectedDriverId) return;
+
+    const checkedGuids = [];
+    document.querySelectorAll('.store-assign-cb:checked').forEach(cb => {
+        checkedGuids.push(cb.value);
+    });
+
+    const btn        = document.querySelector('.btn-save[onclick="submitLocationAssignments()"]');
+    const originalText = btn ? btn.textContent : '';
+    if (btn) btn.textContent = '...';
+
+    try {
+        const resp = await fetch('/drivers/save_locations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ driver_id: selectedDriverId, store_guids: checkedGuids })
+        });
+        const res = await resp.json();
+        if (btn) {
+            if (res.status === 'ok') {
+                btn.textContent = 'SAVED ✓';
+                btn.style.background = '#2a7a3a';
+                setTimeout(() => {
+                    btn.textContent    = originalText;
+                    btn.style.background = '#2e7d32';
+                }, 2500);
+            } else {
+                btn.textContent = 'ERROR';
+                btn.style.background = '#c8392b';
+                setTimeout(() => {
+                    btn.textContent    = originalText;
+                    btn.style.background = '#2e7d32';
+                }, 2500);
+            }
+        }
+    } catch (err) {
+        if (btn) {
+            btn.textContent = 'ERROR';
+            btn.style.background = '#c8392b';
+            setTimeout(() => {
+                btn.textContent    = originalText;
+                btn.style.background = '#2e7d32';
+            }, 2500);
+        }
+    }
+}
+
+function handleLocationChange() {
+    const locationSelect = document.getElementById('field-location');
+    const selectedOption = locationSelect.options[locationSelect.selectedIndex];
+    const routeInput = document.getElementById('field-route');
+
+    if (selectedOption && selectedOption.value) {
+        // Read the custom data-route attribute from the selected option template element
+        const assignedRoute = selectedOption.getAttribute('data-route');
+        routeInput.value = assignedRoute ? assignedRoute : 'Unassigned';
+    } else {
+        routeInput.value = '';
+    }
+}
+
+</script>
+{% endblock %}

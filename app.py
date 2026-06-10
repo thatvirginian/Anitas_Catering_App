@@ -161,6 +161,42 @@ def _get_locations():
         """)).mappings().all()
     return [dict(r) for r in rows]
 
+def _get_client_types():
+    """Load all active catering client types for the dropdown."""
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT name
+            FROM catering_client_types
+            WHERE active = TRUE
+            ORDER BY sort_order, name
+        """)).mappings().all()
+    return [r["name"] for r in rows]
+
+
+def _get_drivers_by_location():
+    """
+    Returns a dict of {location_id (str): [driver display names]}
+    for all active drivers with store assignments.
+    Uses nickname if set, otherwise full_name.
+    """
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT
+                cdl.store_guid::text AS location_id,
+                COALESCE(NULLIF(cd.nickname, ''), cd.full_name) AS display_name
+            FROM catering_driver_locations cdl
+            JOIN catering_drivers cd ON cd.id = cdl.driver_id
+            WHERE cd.active = TRUE
+            ORDER BY cdl.store_guid, display_name
+        """)).mappings().all()
+
+    result = {}
+    for row in rows:
+        loc = row["location_id"]
+        if loc not in result:
+            result[loc] = []
+        result[loc].append(row["display_name"])
+    return result
 
 def _get_store_orders(start_date, end_date, location_guids=None, dining_option_guids=None):
     """
@@ -258,14 +294,7 @@ def _get_store_orders(start_date, end_date, location_guids=None, dining_option_g
         data["location_total"] = _fmt(subtotal)
 
     return grouped
-    """Load all dining options for the filter dropdown."""
-    with engine.connect() as conn:
-        rows = conn.execute(text("""
-            SELECT guid::text, name
-            FROM dining_options
-            ORDER BY name
-        """)).mappings().all()
-    return [dict(r) for r in rows]
+
 
 
 def _get_orders(start_date, end_date, dining_option_guids=None):
@@ -286,9 +315,11 @@ def _get_orders(start_date, end_date, dining_option_guids=None):
             oh.order_guid,
             oh.estimated_fulfillment_date,
             oh.closed_date,
+            oh.location_id::text AS location_id,
             l.location_name,
             l.route,
             l.abbreviation,
+            l.store_guid,
 
             -- Customer name and total from first check
             UPPER(oc.customer_first) AS customer_first,
@@ -312,6 +343,7 @@ def _get_orders(start_date, end_date, dining_option_guids=None):
             cd.num_employees,
             cd.driver_assigned,
             cd.event_company,
+            cd.client_type,
             cd.notes
 
         FROM orders_head oh
@@ -412,6 +444,7 @@ def index():
         end_date   = today + timedelta(days=7)
 
     dining_options = _get_dining_options()
+    client_types = _get_client_types()
     default_guid   = next((d["guid"] for d in dining_options if d["name"] == "Catering- Delivery"), "")
     selected_guids = request.args.getlist("dining_option")
 
@@ -426,13 +459,15 @@ def index():
 
     return render_template(
         "orders.html",
-        grouped             = grouped,
-        totals              = totals,
-        start_date          = start_date.strftime("%Y-%m-%d"),
-        end_date            = end_date.strftime("%Y-%m-%d"),
-        today               = today.strftime("%Y-%m-%d"),
-        dining_options      = dining_options,
-        dining_option_guids = selected_guids,
+        grouped              = grouped,
+        totals               = totals,
+        start_date           = start_date.strftime("%Y-%m-%d"),
+        end_date             = end_date.strftime("%Y-%m-%d"),
+        today                = today.strftime("%Y-%m-%d"),
+        dining_options       = dining_options,
+        dining_option_guids  = selected_guids,
+        client_types         = client_types,
+        drivers_by_location  = _get_drivers_by_location(),
     )
 
 
@@ -457,28 +492,29 @@ def save_order(order_guid):
             return None
 
     sql = text("""
-        INSERT INTO catering_details (
-            order_guid, service_type, travel_time, departure_time,
-            arrival_time, duration, return_time, num_employees,
-            driver_assigned, event_company, notes, last_updated
-        ) VALUES (
-            :order_guid, :service_type, :travel_time, :departure_time,
-            :arrival_time, :duration, :return_time, :num_employees,
-            :driver_assigned, :event_company, :notes, NOW()
-        )
-        ON CONFLICT (order_guid) DO UPDATE SET
-            service_type    = EXCLUDED.service_type,
-            travel_time     = EXCLUDED.travel_time,
-            departure_time  = EXCLUDED.departure_time,
-            arrival_time    = EXCLUDED.arrival_time,
-            duration        = EXCLUDED.duration,
-            return_time     = EXCLUDED.return_time,
-            num_employees   = EXCLUDED.num_employees,
-            driver_assigned = EXCLUDED.driver_assigned,
-            event_company   = EXCLUDED.event_company,
-            notes           = EXCLUDED.notes,
-            last_updated    = NOW()
-    """)
+            INSERT INTO catering_details (
+                order_guid, service_type, travel_time, departure_time,
+                arrival_time, duration, return_time, num_employees,
+                driver_assigned, event_company, client_type, notes, last_updated
+            ) VALUES (
+                :order_guid, :service_type, :travel_time, :departure_time,
+                :arrival_time, :duration, :return_time, :num_employees,
+                :driver_assigned, :event_company, :client_type, :notes, NOW()
+            )
+            ON CONFLICT (order_guid) DO UPDATE SET
+                service_type    = EXCLUDED.service_type,
+                travel_time     = EXCLUDED.travel_time,
+                departure_time  = EXCLUDED.departure_time,
+                arrival_time    = EXCLUDED.arrival_time,
+                duration        = EXCLUDED.duration,
+                return_time     = EXCLUDED.return_time,
+                num_employees   = EXCLUDED.num_employees,
+                driver_assigned = EXCLUDED.driver_assigned,
+                event_company   = EXCLUDED.event_company,
+                client_type     = EXCLUDED.client_type,  -- <-- Add this line
+                notes           = EXCLUDED.notes,
+                last_updated    = NOW()
+        """)
 
     try:
         with engine.begin() as conn:
@@ -493,6 +529,7 @@ def save_order(order_guid):
                 "num_employees":   i(data.get("num_employees")),
                 "driver_assigned": data.get("driver_assigned"),
                 "event_company":   data.get("event_company"),
+                "client_type":     data.get("client_type"),
                 "notes":           data.get("notes"),
             })
         return jsonify({"status": "ok"})
@@ -754,6 +791,158 @@ def store_print():
         end_date           = end_date.strftime("%m/%d/%Y"),
         now                = now_et,
     )
+
+
+###Drivers###
+@app.route("/drivers")
+def manage_drivers():
+    """Render the driver management console."""
+    # 1. Fetch all locations for both assignments AND profile dropdown tracking
+    with engine.connect() as conn:
+        loc_rows = conn.execute(text("""
+            SELECT store_guid::text AS guid, location_name AS name, route
+            FROM locations
+            ORDER BY location_name
+        """)).mappings().all()
+        locations_list = [dict(r) for r in loc_rows]  # converted to plain dicts
+
+    # 2. Fetch all drivers with their fields
+    with engine.connect() as conn:
+        drivers_rows = conn.execute(text("""
+            SELECT id, full_name, first_name, last_name, nickname,
+                   has_id, gender, dob, state, location, route, active,
+                   has_auth, has_mvr, license_number, last_completed
+            FROM catering_drivers
+            ORDER BY active DESC, full_name ASC
+        """)).mappings().all()
+
+        # Convert RowMappings into JSON-serializable plain dictionaries
+        # Dates must be converted to strings for tojson to work in the template
+        drivers_list = []
+        for r in drivers_rows:
+            d = dict(r)
+            def to_date_str(val):
+                if val is None:
+                    return None
+                if hasattr(val, 'isoformat'):
+                    return val.isoformat()[:10]  # handles both date and datetime
+                # Already a string — extract YYYY-MM-DD if possible
+                s = str(val).strip()
+                if len(s) >= 10 and s[4] == '-':
+                    return s[:10]
+                return None
+
+            d["dob"]            = to_date_str(d.get("dob"))
+            d["last_completed"] = to_date_str(d.get("last_completed"))
+            print(f"[DRIVER] id={d['id']} dob={d['dob']} last_completed={d['last_completed']}")
+            drivers_list.append(d)
+
+        # 3. Fetch all current driver-location assignments
+        assignment_rows = conn.execute(text("""
+            SELECT driver_id, store_guid::text AS store_guid 
+            FROM catering_driver_locations
+        """)).mappings().all()
+
+    assignments = {}
+    for row in assignment_rows:
+        assignments.setdefault(row["driver_id"], []).append(row["store_guid"])
+
+    return render_template(
+        "drivers.html",
+        drivers=drivers_list,  # Pass the serializable list of plain dicts
+        locations=locations_list,
+        assignments=assignments
+    )
+
+
+@app.route("/drivers/save", methods=["POST"])
+def save_driver():
+    """Create or update a driver profile."""
+    data = request.get_json(force=True)
+    driver_id = data.get("id")
+
+    def parse_date(val):
+        if not val or str(val).strip() == "": return None
+        try:
+            return datetime.strptime(val.strip(), "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    params = {
+        "full_name": data.get("full_name"),
+        "first_name": data.get("first_name") or None,
+        "last_name": data.get("last_name") or None,
+        "nickname": data.get("nickname") or None,
+        "has_id": bool(data.get("has_id")),
+        "gender": data.get("gender") or None,
+        "dob": parse_date(data.get("dob")),
+        "state": data.get("state") or None,
+        "location": data.get("location") or None,
+        "route": data.get("route") or None,
+        "active": bool(data.get("active", True)),
+        "has_auth": bool(data.get("has_auth")),
+        "has_mvr": bool(data.get("has_mvr")),
+        "license_number": data.get("license_number") or None,
+        "last_completed": parse_date(data.get("last_completed"))
+    }
+
+    if driver_id:
+        # Update existing driver
+        params["id"] = int(driver_id)
+        sql = text("""
+            UPDATE catering_drivers SET
+                full_name = :full_name, first_name = :first_name, last_name = :last_name, nickname = :nickname,
+                has_id = :has_id, gender = :gender, dob = :dob, state = :state, location = :location,
+                route = :route, active = :active, has_auth = :has_auth, has_mvr = :has_mvr,
+                license_number = :license_number, last_completed = :last_completed
+            WHERE id = :id
+        """)
+    else:
+        # Create new driver
+        sql = text("""
+            INSERT INTO catering_drivers (
+                full_name, first_name, last_name, nickname, has_id, gender, dob, state,
+                location, route, active, has_auth, has_mvr, license_number, last_completed
+            ) VALUES (
+                :full_name, :first_name, :last_name, :nickname, :has_id, :gender, :dob, :state,
+                :location, :route, :active, :has_auth, :has_mvr, :license_number, :last_completed
+            ) RETURNING id
+        """)
+
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(sql, params)
+            if not driver_id:
+                driver_id = result.scalar()
+        return jsonify({"status": "ok", "driver_id": driver_id})
+    except Exception as e:
+        logger.error(f"Failed to save driver: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/drivers/save_locations", methods=["POST"])
+def save_driver_locations():
+    """Sync locations assigned to a driver."""
+    data = request.get_json(force=True)
+    driver_id = data.get("driver_id")
+    store_guids = data.get("store_guids", [])  # List of UUID strings
+
+    if not driver_id:
+        return jsonify({"status": "error", "message": "Missing driver_id"}), 400
+
+    try:
+        with engine.begin() as conn:
+            # Clear old locations
+            conn.execute(text("DELETE FROM catering_driver_locations WHERE driver_id = :id"), {"id": driver_id})
+            # Insert new selections
+            if store_guids:
+                ins_sql = text("INSERT INTO catering_driver_locations (driver_id, store_guid) VALUES (:id, :guid)")
+                for guid in store_guids:
+                    conn.execute(ins_sql, {"id": driver_id, "guid": guid})
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        logger.error(f"Failed to save driver locations: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 if __name__ == "__main__":

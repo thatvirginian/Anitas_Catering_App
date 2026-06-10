@@ -104,13 +104,16 @@
                         <th class="col-driver">DRIVER</th>
                         <th class="col-customer">CUSTOMER</th>
                         <th class="col-company">COMPANY</th>
+                        <th class="col-client-type">CLIENT TYPE</th>
                         <th class="col-map"></th>
                         <th class="col-actions"></th>
                     </tr>
                 </thead>
                 <tbody>
                 {% for order in data.orders %}
-                <tr class="order-row" data-guid="{{ order.order_guid }}">
+                <tr class="order-row" data-guid="{{ order.order_guid }}"
+                    data-location="{{ order.location_id or '' }}"
+                    data-driver="{{ order.driver_assigned or '' }}">
                     <td class="col-date">{{ order.display_date }}</td>
                     <td class="col-day">{{ order.display_day }}</td>
                     <td class="col-svc">
@@ -147,9 +150,10 @@
                                min="1" placeholder="—">
                     </td>
                     <td class="col-driver">
-                        <input class="cell-input" type="text" name="driver_assigned"
-                               value="{{ order.driver_assigned or '' }}"
-                               placeholder="Driver name">
+                        <select class="cell-input cell-select" name="driver_assigned">
+                            <option value="">— Select —</option>
+                            {# Options populated by JS based on location_id #}
+                        </select>
                     </td>
                     <td class="col-customer">
                         {{ order.customer_first or '' }} {{ order.customer_last or '' }}
@@ -158,6 +162,14 @@
                         <input class="cell-input" type="text" name="event_company"
                                value="{{ order.event_company or '' }}"
                                placeholder="Company">
+                    </td>
+                    <td class="col-client-type">
+                        <select class="cell-input" name="client_type">
+                            <option value="">— Select —</option>
+                            {% for ct in client_types %}
+                            <option value="{{ ct }}" {% if order.client_type == ct %}selected{% endif %}>{{ ct }}</option>
+                            {% endfor %}
+                        </select>
                     </td>
                     <td class="col-map">
                         <button class="map-btn" onclick="openMap('{{ order.order_guid }}')" title="View map">
@@ -182,6 +194,35 @@
 {% endif %}
 
 <script>
+const DRIVERS_BY_LOCATION = {{ drivers_by_location | tojson }};
+
+function populateDriverDropdown(row) {
+    const locationId = row.dataset.location;
+    const current    = row.dataset.driver;
+    const select     = row.querySelector('select[name="driver_assigned"]');
+    if (!select) return;
+    const drivers = DRIVERS_BY_LOCATION[locationId] || [];
+    select.innerHTML = '<option value="">— Select —</option>';
+    drivers.forEach(name => {
+        const opt       = document.createElement('option');
+        opt.value       = name;
+        opt.textContent = name;
+        if (name === current) opt.selected = true;
+        select.appendChild(opt);
+    });
+    if (current && !drivers.includes(current)) {
+        const opt       = document.createElement('option');
+        opt.value       = current;
+        opt.textContent = current + ' *';
+        opt.selected    = true;
+        select.appendChild(opt);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.order-row').forEach(row => populateDriverDropdown(row));
+});
+
 // ── Route toggle ──────────────────────────────────────────────────────────────
 document.querySelectorAll('.toggle-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -206,7 +247,8 @@ document.querySelectorAll('.toggle-btn').forEach(btn => {
 
 // ── Save row ──────────────────────────────────────────────────────────────────
 function getRowData(row) {
-    const inputs = row.querySelectorAll('input[name]');
+    // Modified to look for both inputs and select boxes
+    const inputs = row.querySelectorAll('input[name], select[name]');
     const data = {};
     inputs.forEach(input => { data[input.name] = input.value; });
     return data;
