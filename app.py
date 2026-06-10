@@ -429,6 +429,10 @@ def _get_route_totals(grouped):
 def home():
     return render_template("home.html", year=datetime.now().year)
 
+@app.route("/debug/headers")
+def debug_headers():
+    headers = {k: v for k, v in request.headers}
+    return jsonify(headers)
 
 @app.route("/schedule")
 def index():
