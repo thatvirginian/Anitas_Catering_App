@@ -28,7 +28,9 @@
         <nav class="header-nav">
             {% block nav %}
             <a href="{{ url_for('home') }}" class="nav-link">HOME</a>
+            {% if 'admin' in user.roles or 'catering' in user.roles %}
             <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint == 'index' %}active{% endif %}">SCHEDULE</a>
+            {% endif %}
             <a href="{{ url_for('store') }}" class="nav-link {% if request.endpoint == 'store' %}active{% endif %}">STORE VIEW</a>
             <a href="/.auth/logout" class="nav-link nav-link--logout">LOGOUT</a>
             {% endblock %}
