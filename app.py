@@ -1048,6 +1048,11 @@ def print_drivers():
         now              = now_et,
     )
 
+@app.route("/debug/headers")
+def debug_headers():
+    headers = {k: v for k, v in request.headers}
+    return jsonify(headers)
+
 
 if __name__ == "__main__":
     app.run(debug=False, host="0.0.0.0", port=8000)
