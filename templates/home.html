@@ -192,7 +192,7 @@
 </div>
 
 <div class="home-grid">
-
+    {% if 'admin' in user.roles or 'catering' in user.roles %}
     <a href="{{ url_for('index') }}" class="home-card">
         <span class="home-card-tag home-card-tag--live">LIVE</span>
         <div class="home-card-icon">📋</div>
@@ -204,6 +204,7 @@
         </div>
         <div class="home-card-arrow">OPEN →</div>
     </a>
+    {% endif %}
 
     <a href="{{ url_for('store') }}" class="home-card">
         <span class="home-card-tag home-card-tag--live">LIVE</span>
@@ -228,7 +229,7 @@
         </div>
     </div>
 
-    {% if user.is_admin %}
+    {% if 'admin' in user.roles or 'catering' in user.roles %}
     <a href="{{ url_for('admin') }}" class="home-card" style="border-top: 3px solid var(--accent);">
         <span class="home-card-tag" style="border-color:#c8392b;color:#c8392b;background:#fdf0f0;">ADMIN</span>
         <div class="home-card-icon">⚙️</div>
