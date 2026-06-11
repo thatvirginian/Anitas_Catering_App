@@ -555,8 +555,9 @@ def home():
 def admin():
     return render_template("admin.html")
 
-@role_required("admin","catering")
+
 @app.route("/schedule")
+@role_required("admin","catering")
 def index():
     today     = date.today()
     start_str = request.args.get("start", today.strftime("%Y-%m-%d"))
@@ -1104,7 +1105,10 @@ def print_drivers():
         include_inactive = include_inactive,
         now              = now_et,
     )
-
+@app.route("/debug/headers")
+def debug_headers():
+    headers = {k: v for k, v in request.headers}
+    return jsonify(headers)
 
 if __name__ == "__main__":
     app.run(debug=False, host="0.0.0.0", port=8000)
