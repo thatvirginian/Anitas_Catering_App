@@ -7,6 +7,9 @@
 {# ── Filter Bar ─────────────────────────────────────────────────────────────── #}
 <div class="filter-bar">
     <form class="filter-form" method="GET" action="/store">
+        <a id="store-print-link"
+           href="/store/print?start={{ start_date }}&end={{ end_date }}{% for g in selected_locations %}&location={{ g }}{% endfor %}{% for g in dining_option_guids %}&dining_option={{ g }}{% endfor %}"
+           class="filter-btn filter-btn--ghost" target="_blank">PRINT VIEW</a>
         <div class="filter-group">
             <label class="filter-label">FROM</label>
             <input class="filter-input" type="date" name="start" value="{{ start_date }}">
@@ -26,7 +29,7 @@
                     <span style="font-size:10px;color:var(--ink-light);">&#9660;</span>
                 </div>
             </div>
-            <div class="do-panel" id="loc-panel">
+            <div class="do-panel" id="loc-panel" style="display:none;">
                 <div class="do-item" onclick="toggleLocAll(event)">
                     <input type="checkbox" id="loc-opt-all">
                     <label for="loc-opt-all">All locations</label>
@@ -57,7 +60,7 @@
                     <span style="font-size:10px;color:var(--ink-light);">&#9660;</span>
                 </div>
             </div>
-            <div class="do-panel" id="do-panel">
+            <div class="do-panel" id="do-panel" style="display:none;">
                 <div class="do-item" onclick="toggleDOAll(event)">
                     <input type="checkbox" id="do-opt-all">
                     <label for="do-opt-all">All dining options</label>
@@ -72,8 +75,8 @@
                            {% if opt.guid in dining_option_guids %}checked{% endif %}>
                     <label for="do-opt-{{ loop.index }}">{{ opt.name }}</label>
                 </div>
+                {% endfor %}
             </div>
-            {% endfor %}
         </div>
         {% endif %}
         <button class="filter-btn" type="submit">APPLY</button>
@@ -87,9 +90,7 @@
             <span class="total-chip__value">{{ grand_total }}</span>
         </div>
         {% endif %}
-        <a id="store-print-link"
-           href="/store/print?start={{ start_date }}&end={{ end_date }}{% for g in selected_locations %}&location={{ g }}{% endfor %}{% for g in dining_option_guids %}&dining_option={{ g }}{% endfor %}"
-           class="filter-btn filter-btn--ghost" target="_blank">PRINT VIEW</a>
+
     </div>
     </div>
 </div>
@@ -176,9 +177,10 @@
 {% endfor %}
 {% endif %}
 
+<div id="drivers-data" data-drivers='{{ drivers_by_location | tojson }}' style="display:none;"></div>
 <script>
 // ── Drivers ───────────────────────────────────────────────────────────────────
-const DRIVERS_BY_LOCATION = {{ drivers_by_location | tojson }};
+const DRIVERS_BY_LOCATION = JSON.parse(document.getElementById('drivers-data').dataset.drivers);
 
 function populateDriverDropdown(row) {
     const locationId = row.dataset.location;

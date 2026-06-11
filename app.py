@@ -30,7 +30,7 @@ def load_user():
 
     if not user_id:
         # Local dev — no EasyAuth headers present
-        g.user = {"user_id": "dev", "username": "dev@local", "roles": ["Store"], "is_admin": True}
+        g.user = {"user_id": "dev", "username": "dev@local", "roles": ["store"], "is_admin": True}
         return
 
     roles = []
