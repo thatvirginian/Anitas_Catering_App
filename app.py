@@ -30,7 +30,7 @@ def load_user():
 
     if not user_id:
         # Local dev — no EasyAuth headers present
-        g.user = {"user_id": "dev", "username": "dev@local", "roles": ["store"], "is_admin": True}
+        g.user = {"user_id": "dev", "username": "dev@local", "roles": ["Store"], "is_admin": True}
         return
 
     roles = []
@@ -503,8 +503,9 @@ def home():
 def admin():
     return render_template("admin.html")
 
-@role_required("admin","catering")
+
 @app.route("/schedule")
+@role_required("admin","catering")
 def index():
     today     = date.today()
     start_str = request.args.get("start", today.strftime("%Y-%m-%d"))
@@ -613,7 +614,6 @@ def save_order(order_guid):
 
 
 @app.route("/schedule/print")
-@role_required("admin","catering")
 def print_view():
     start_str      = request.args.get("start", date.today().strftime("%Y-%m-%d"))
     end_str        = request.args.get("end",   (date.today() + timedelta(days=7)).strftime("%Y-%m-%d"))
@@ -871,6 +871,7 @@ def store_print():
 
 ###Drivers###
 @app.route("/drivers")
+@role_required("admin","catering")
 def manage_drivers():
     """Render the driver management console."""
     # 1. Fetch all locations for both assignments AND profile dropdown tracking
@@ -1049,11 +1050,6 @@ def print_drivers():
         now              = now_et,
     )
 
-@app.route("/debug/headers")
-def debug_headers():
-    headers = {k: v for k, v in request.headers}
-    return jsonify(headers)
 
 if __name__ == "__main__":
     app.run(debug=False, host="0.0.0.0", port=8000)
-
