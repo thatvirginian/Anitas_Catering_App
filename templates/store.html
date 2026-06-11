@@ -46,7 +46,9 @@
         </div>
 
         {# ── Dining option dropdown ─────────────────────────────────────────── #}
+
         <div class="filter-group do-wrapper">
+            {% if 'admin' in user.roles or 'catering' in user.roles %}
             <label class="filter-label">DINING OPTION</label>
             <div class="do-trigger" id="do-trigger" onclick="toggleDOPanel(event)">
                 <span class="do-trigger-text" id="do-label">Loading...</span>
@@ -70,19 +72,21 @@
                            {% if opt.guid in dining_option_guids %}checked{% endif %}>
                     <label for="do-opt-{{ loop.index }}">{{ opt.name }}</label>
                 </div>
-                {% endfor %}
             </div>
+            {% endfor %}
         </div>
-
+        {% endif %}
         <button class="filter-btn" type="submit">APPLY</button>
         <a class="filter-btn filter-btn--ghost" href="/store">RESET</a>
     </form>
 
     <div class="totals-bar">
+        {% if 'admin' in user.roles or 'catering' in user.roles %}
         <div class="total-chip total-chip--grand">
             <span class="total-chip__label">GRAND TOTAL</span>
             <span class="total-chip__value">{{ grand_total }}</span>
         </div>
+        {% endif %}
         <a id="store-print-link"
            href="/store/print?start={{ start_date }}&end={{ end_date }}{% for g in selected_locations %}&location={{ g }}{% endfor %}{% for g in dining_option_guids %}&dining_option={{ g }}{% endfor %}"
            class="filter-btn filter-btn--ghost" target="_blank">PRINT VIEW</a>

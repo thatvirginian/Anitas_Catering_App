@@ -6,6 +6,9 @@
 
 {# ── Filter Bar ─────────────────────────────────────────────────────────────── #}
 <div class="filter-bar">
+    <a id="store-print-link"
+           href="/schedule/print?start={{ start_date }}&end={{ end_date }}{% for g in selected_locations %}&location={{ g }}{% endfor %}{% for g in dining_option_guids %}&dining_option={{ g }}{% endfor %}"
+           class="filter-btn filter-btn--ghost" target="_blank">PRINT VIEW</a>
     <form class="filter-form" method="GET" action="/schedule">
         <div class="filter-group">
             <label class="filter-label">FROM</label>

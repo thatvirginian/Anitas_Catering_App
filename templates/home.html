@@ -170,14 +170,15 @@
             font-family: var(--font-mono);
             font-size: 10px; color: var(--ink-light);
             display: flex; justify-content: space-between;
+            margin-top: auto;
         }
     </style>
 </head>
-<body>
+<body style="min-height:100vh; display:flex; flex-direction:column;">
 
 <header class="home-header">
     <div class="home-header-brand">
-        <img src="https://d3ciwvs59ifrt8.cloudfront.net/9cf1ec9b-d1e5-446e-bba8-79268b0d6b88/a2c61101-ffed-487e-9e8e-1248ae3a4cb7.png"
+        <img src="{{ url_for('static', filename='anitas_logo.png') }}"
              alt="Anita's" class="home-logo">
         <span class="home-header-divider">|</span>
         <span class="home-header-sub">CATERING OPS</span>
@@ -205,7 +206,6 @@
         <div class="home-card-arrow">OPEN →</div>
     </a>
     {% endif %}
-
     <a href="{{ url_for('store') }}" class="home-card">
         <span class="home-card-tag home-card-tag--live">LIVE</span>
         <div class="home-card-icon">🏪</div>
@@ -217,7 +217,7 @@
         </div>
         <div class="home-card-arrow">OPEN →</div>
     </a>
-
+    {% if 'admin' in user.roles or 'catering' in user.roles %}
     <div class="home-card home-card--disabled">
         <span class="home-card-tag home-card-tag--soon">COMING SOON</span>
         <div class="home-card-icon">📊</div>
@@ -228,6 +228,7 @@
             across the catering operation.
         </div>
     </div>
+    {% endif %}
 
     {% if 'admin' in user.roles or 'catering' in user.roles %}
     <a href="{{ url_for('admin') }}" class="home-card" style="border-top: 3px solid var(--accent);">
