@@ -30,7 +30,7 @@ def load_user():
 
     if not user_id:
         # Local dev — no EasyAuth headers present
-        g.user = {"user_id": "dev", "username": "dev@local", "roles": ["store"], "is_admin": True}
+        g.user = {"user_id": "dev", "username": "Vienna@anitascorp.co", "roles": ["store"], "is_admin": True}
         return
 
     roles = []
@@ -216,6 +216,58 @@ def _get_locations():
             ORDER BY location_name
         """)).mappings().all()
     return [dict(r) for r in rows]
+
+
+def _get_store_locations_for_user(user):
+    """
+    Returns a filtered list of locations the user is allowed to see,
+    or all locations for admin/catering/gm.
+
+    Supports two patterns:
+    1. store role + email: vienna@anitascorp.com matched against locations.contact_email
+    2. store_ role (future): store_vienna matched against location_name
+    """
+    roles = user["roles"]
+
+    # Full access roles
+    if any(r in roles for r in ["admin", "catering", "gm"]):
+        return _get_locations()
+
+    allowed_guids = set()
+
+    # Pattern 1 — store role, match by email
+    if "store" in roles:
+        email = user.get("username", "").lower().strip()
+        if email:
+            with engine.connect() as conn:
+                rows = conn.execute(text("""
+                    SELECT store_guid::text AS guid, location_name AS name
+                    FROM locations
+                    WHERE LOWER(contact_email) = :email
+                    ORDER BY location_name
+                """), {"email": email}).mappings().all()
+            for r in rows:
+                allowed_guids.add(r["guid"])
+
+    # Pattern 2 — store_ roles (future proofing)
+    store_names = [r.replace("store_", "").lower() for r in roles if r.startswith("store_")]
+    if store_names:
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT store_guid::text AS guid, location_name AS name
+                FROM locations
+                WHERE LOWER(location_name) = ANY(:store_names)
+                ORDER BY location_name
+            """), {"store_names": store_names}).mappings().all()
+        for r in rows:
+            allowed_guids.add(r["guid"])
+
+    # Return matched locations in name order
+    if allowed_guids:
+        all_locs = _get_locations()
+        return [l for l in all_locs if l["guid"] in allowed_guids]
+
+    return []
 
 def _get_client_types():
     """Load all active catering client types for the dropdown."""
@@ -503,9 +555,8 @@ def home():
 def admin():
     return render_template("admin.html")
 
-
-@app.route("/schedule")
 @role_required("admin","catering")
+@app.route("/schedule")
 def index():
     today     = date.today()
     start_str = request.args.get("start", today.strftime("%Y-%m-%d"))
@@ -787,18 +838,23 @@ def store():
         start_date = today
         end_date   = today + timedelta(days=7)
 
-    locations      = _get_locations()
+    locations      = _get_store_locations_for_user(g.user)
     dining_options = _get_dining_options()
 
     # Default dining option to Catering- Delivery
     default_dining = next((d["guid"] for d in dining_options if d["name"] == "Catering- Delivery"), "")
-    selected_locations     = request.args.getlist("location")
     selected_dining_guids  = request.args.getlist("dining_option")
 
     if not selected_dining_guids or selected_dining_guids == [""]:
         selected_dining_guids = [default_dining] if default_dining else []
     if "" in selected_dining_guids:
         selected_dining_guids = []
+
+    # For store role users — auto-apply their location, ignore URL params
+    if "store" in g.user["roles"] and not any(r in g.user["roles"] for r in ["admin", "catering", "gm"]):
+        selected_locations = [l["guid"] for l in locations]
+    else:
+        selected_locations = request.args.getlist("location")
 
     grouped = _get_store_orders(
         start_date, end_date,
@@ -871,7 +927,6 @@ def store_print():
 
 ###Drivers###
 @app.route("/drivers")
-@role_required("admin","catering")
 def manage_drivers():
     """Render the driver management console."""
     # 1. Fetch all locations for both assignments AND profile dropdown tracking
