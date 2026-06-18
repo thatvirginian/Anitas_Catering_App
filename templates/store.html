@@ -7,9 +7,6 @@
 {# ── Filter Bar ─────────────────────────────────────────────────────────────── #}
 <div class="filter-bar">
     <form class="filter-form" method="GET" action="/store">
-        <a id="store-print-link"
-           href="/store/print?start={{ start_date }}&end={{ end_date }}{% for g in selected_locations %}&location={{ g }}{% endfor %}{% for g in dining_option_guids %}&dining_option={{ g }}{% endfor %}"
-           class="filter-btn filter-btn--ghost" target="_blank">PRINT VIEW</a>
         <div class="filter-group">
             <label class="filter-label">FROM</label>
             <input class="filter-input" type="date" name="start" value="{{ start_date }}">
@@ -90,7 +87,9 @@
             <span class="total-chip__value">{{ grand_total }}</span>
         </div>
         {% endif %}
-
+        <a id="store-print-link"
+           href="/store/print?start={{ start_date }}&end={{ end_date }}{% for g in selected_locations %}&location={{ g }}{% endfor %}{% for g in dining_option_guids %}&dining_option={{ g }}{% endfor %}"
+           class="filter-btn filter-btn--ghost" target="_blank">PRINT VIEW</a>
     </div>
     </div>
 </div>
@@ -116,6 +115,7 @@
         <table class="schedule-table">
             <thead>
                 <tr>
+                    <th class="col-map"></th>
                     <th class="col-date">DATE</th>
                     <th class="col-day">DAY</th>
                     <th class="col-svc">SERVICE</th>
@@ -129,7 +129,7 @@
                     <th class="col-driver">DRIVER</th>
                     <th class="col-customer">CUSTOMER</th>
                     <th class="col-company">COMPANY</th>
-                    <th class="col-map"></th>
+                    <th class="col-attach"></th>
                     <th class="col-actions"></th>
                 </tr>
             </thead>
@@ -138,6 +138,9 @@
             <tr class="order-row" data-guid="{{ order.order_guid }}"
                 data-location="{{ order.location_id or '' }}"
                 data-driver="{{ order.driver_assigned or '' }}">
+                <td class="col-map">
+                    <button class="map-btn" onclick="openMap('{{ order.order_guid }}')" title="View map">&#128506;</button>
+                </td>
                 <td class="col-date">{{ order.display_date }}</td>
                 <td class="col-day">{{ order.display_day }}</td>
                 <td class="col-svc">{{ order.service_type or '' }}</td>
@@ -161,8 +164,10 @@
                 </td>
                 <td class="col-customer">{{ order.customer_first or '' }} {{ order.customer_last or '' }}</td>
                 <td class="col-company">{{ order.event_company or '' }}</td>
-                <td class="col-map">
-                    <button class="map-btn" onclick="openMap('{{ order.order_guid }}')" title="View map">&#128506;</button>
+                <td class="col-attach">
+                    <button class="attach-btn {% if order.order_guid in unread_notifications %}has-notification{% endif %}"
+                            onclick="openAttachments('{{ order.order_guid }}')"
+                            title="Attachments">📎</button>
                 </td>
                 <td class="col-actions">
                     <button class="save-btn" onclick="saveDriver(this)" title="Save driver">✓</button>
@@ -350,6 +355,146 @@ document.addEventListener('DOMContentLoaded', () => {
 </script>
 
 {# ── Map Modal ───────────────────────────────────────────────────────────────── #}
+
+<!-- ── Attachment Modal ──────────────────────────────────────────────────── -->
+<div id="attach-modal-overlay" class="map-overlay" style="display:none;" onclick="closeAttachments(event)">
+    <div class="map-modal" style="max-width:560px;" onclick="event.stopPropagation()">
+        <div class="attach-modal-header">
+            <span class="attach-modal-title">📎 Attachments</span>
+            <button class="map-close-btn" onclick="closeAttachments()">✕</button>
+        </div>
+        <div class="attach-file-list" id="attach-file-list">
+            <div class="attach-empty">Loading...</div>
+        </div>
+        <div class="attach-upload-area" id="attach-upload-area" style="display:none;">
+            <input type="file" id="attach-file-input" accept=".pdf" style="flex:1;font-size:12px;">
+            <button class="filter-btn" id="attach-upload-btn" onclick="uploadAttachment()">UPLOAD</button>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentAttachOrderGuid = null;
+const CAN_ADMIN_ATTACH = {{ ('true' if 'admin' in user.roles or 'catering' in user.roles else 'false') }};
+
+async function openAttachments(orderGuid) {
+    currentAttachOrderGuid = orderGuid;
+    const overlay = document.getElementById('attach-modal-overlay');
+    overlay.style.display = 'flex';
+    document.getElementById('attach-file-list').innerHTML = '<div class="attach-empty">Loading...</div>';
+    document.getElementById('attach-upload-area').style.display = CAN_ADMIN_ATTACH ? 'flex' : 'none';
+
+    // Mark as seen
+    fetch(`/notifications/${orderGuid}/seen`, {method: 'POST'});
+
+    // Remove notification dot from button
+    document.querySelectorAll(`.attach-btn`).forEach(btn => {
+        if (btn.closest('tr') && btn.closest('tr').dataset.guid === orderGuid) {
+            btn.classList.remove('has-notification');
+        }
+    });
+
+    await loadAttachments(orderGuid);
+}
+
+async function loadAttachments(orderGuid) {
+    try {
+        const resp = await fetch(`/attachments/${orderGuid}`);
+        const data = await resp.json();
+        const list = document.getElementById('attach-file-list');
+
+        if (!data.attachments || data.attachments.length === 0) {
+            list.innerHTML = '<div class="attach-empty">No files attached to this order.</div>';
+            return;
+        }
+
+        list.innerHTML = data.attachments.map(a => `
+            <div class="attach-file-item">
+                <div>
+                    <div class="attach-file-name">📄 ${a.filename}</div>
+                    <div class="attach-file-meta">Uploaded by ${a.uploaded_by} · ${a.uploaded_at}</div>
+                </div>
+                <div class="attach-file-actions">
+                    <a href="/attachments/${a.id}/download"
+                       target="_blank"
+                       class="filter-btn filter-btn--ghost"
+                       style="font-size:10px;padding:4px 10px;text-decoration:none;">
+                       PRINT
+                    </a>
+                    ${CAN_ADMIN_ATTACH ? `
+                    <button class="filter-btn" style="font-size:10px;padding:4px 10px;background:#c8392b;border-color:#c8392b;"
+                            onclick="deleteAttachment(${a.id})">DELETE</button>` : ''}
+                </div>
+            </div>
+        `).join('');
+    } catch (e) {
+        document.getElementById('attach-file-list').innerHTML =
+            '<div class="attach-empty">Error loading attachments.</div>';
+    }
+}
+
+async function uploadAttachment() {
+    const input = document.getElementById('attach-file-input');
+    const btn   = document.getElementById('attach-upload-btn');
+    if (!input.files.length) return;
+
+    const file    = input.files[0];
+    const maxSize = 25 * 1024 * 1024;
+    if (file.size > maxSize) {
+        alert('File exceeds 25MB limit.');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    btn.textContent = '...';
+    btn.disabled    = true;
+
+    try {
+        const resp = await fetch(`/attachments/${currentAttachOrderGuid}/upload`, {
+            method: 'POST', body: formData
+        });
+        const data = await resp.json();
+        if (data.status === 'ok') {
+            input.value = '';
+            btn.textContent = 'UPLOAD';
+            btn.disabled    = false;
+            await loadAttachments(currentAttachOrderGuid);
+        } else {
+            alert(data.message || 'Upload failed.');
+            btn.textContent = 'UPLOAD';
+            btn.disabled    = false;
+        }
+    } catch (e) {
+        alert('Upload failed.');
+        btn.textContent = 'UPLOAD';
+        btn.disabled    = false;
+    }
+}
+
+async function deleteAttachment(attachmentId) {
+    if (!confirm('Delete this attachment?')) return;
+    try {
+        const resp = await fetch(`/attachments/${attachmentId}/delete`, {method: 'POST'});
+        const data = await resp.json();
+        if (data.status === 'ok') {
+            await loadAttachments(currentAttachOrderGuid);
+        } else {
+            alert('Delete failed.');
+        }
+    } catch (e) {
+        alert('Delete failed.');
+    }
+}
+
+function closeAttachments(e) {
+    if (e && e.target !== document.getElementById('attach-modal-overlay')) return;
+    document.getElementById('attach-modal-overlay').style.display = 'none';
+    currentAttachOrderGuid = null;
+}
+</script>
+
 <div id="map-modal-overlay" class="map-overlay" style="display:none;" onclick="closeMap(event)">
     <div class="map-modal" onclick="event.stopPropagation()">
         <div class="map-modal-header">

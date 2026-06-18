@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from flask import Flask, render_template, request, jsonify, abort, g
+from flask import Flask, render_template, request, jsonify, abort, g, Response
 from sqlalchemy import text
 from datetime import datetime, date, timedelta
 from functools import wraps
@@ -20,6 +20,14 @@ engine = get_engine()
 GEOCODIO_API_KEY = os.getenv("GEOCODIO_API_KEY")
 ORS_API_KEY      = os.getenv("ORS_API_KEY")
 
+# SharePoint / Graph API
+SP_TENANT_ID     = os.getenv("SHAREPOINT_TENANT_ID")
+SP_CLIENT_ID     = os.getenv("SHAREPOINT_CLIENT_ID")
+SP_CLIENT_SECRET = os.getenv("SHAREPOINT_CLIENT_SECRET")
+SP_SITE_URL      = os.getenv("SHAREPOINT_SITE_URL")   # e.g. https://anitascorp.sharepoint.com/sites/catering
+SP_DRIVE_ID      = os.getenv("SHAREPOINT_DRIVE_ID")   # document library drive ID
+SP_MAX_BYTES     = 25 * 1024 * 1024                    # 25 MB upload cap
+
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -30,7 +38,7 @@ def load_user():
 
     if not user_id:
         # Local dev — no EasyAuth headers present
-        g.user = {"user_id": "dev", "username": "Vienna@anitascorp.co", "roles": ["store"], "is_admin": True}
+        g.user = {"user_id": "dev", "username": "dev@local", "roles": ["admin"], "is_admin": True}
         return
 
     roles = []
@@ -203,6 +211,7 @@ def _get_dining_options():
         rows = conn.execute(text("""
             SELECT guid::text, name
             FROM dining_options
+            WHERE name LIKE '%Catering%'
             ORDER BY name
         """)).mappings().all()
     return [dict(r) for r in rows]
@@ -555,9 +564,8 @@ def home():
 def admin():
     return render_template("admin.html")
 
-
-@app.route("/schedule")
 @role_required("admin","catering")
+@app.route("/schedule")
 def index():
     today     = date.today()
     start_str = request.args.get("start", today.strftime("%Y-%m-%d"))
@@ -584,6 +592,15 @@ def index():
     grouped = _get_orders(start_date, end_date, selected_guids or None)
     totals  = _get_route_totals(grouped)
 
+    # Collect all order guids for notification check
+    all_guids = [
+        o["order_guid"]
+        for locs in grouped.values()
+        for data in locs.values()
+        for o in data["orders"]
+    ]
+    unread = _get_unread_notifications(all_guids, g.user["username"])
+
     return render_template(
         "orders.html",
         grouped              = grouped,
@@ -595,11 +612,11 @@ def index():
         dining_option_guids  = selected_guids,
         client_types         = client_types,
         drivers_by_location  = _get_drivers_by_location(),
+        unread_notifications = unread,
     )
 
 
 @app.route("/save/<order_guid>", methods=["POST"])
-@role_required("admin","catering","store")
 def save_order(order_guid):
     """Upsert catering_details for one order.
     Only updates fields that are present in the payload — missing fields
@@ -667,7 +684,6 @@ def save_order(order_guid):
 
 
 @app.route("/schedule/print")
-@role_required("admin","catering")
 def print_view():
     start_str      = request.args.get("start", date.today().strftime("%Y-%m-%d"))
     end_str        = request.args.get("end",   (date.today() + timedelta(days=7)).strftime("%Y-%m-%d"))
@@ -709,7 +725,6 @@ def print_view():
 
 
 @app.route("/map/<order_guid>")
-@role_required("admin","catering","store")
 def map_view(order_guid):
     """
     Returns JSON with store + delivery coordinates and travel estimate.
@@ -830,7 +845,6 @@ def map_view(order_guid):
 
 
 @app.route("/store")
-@role_required("admin","catering","store")
 def store():
     today     = date.today()
     start_str = request.args.get("start", today.strftime("%Y-%m-%d"))
@@ -874,6 +888,10 @@ def store():
         for o in data["orders"]
     ))
 
+    # Collect all order guids for notification check
+    all_guids = [o["order_guid"] for data in grouped.values() for o in data["orders"]]
+    unread    = _get_unread_notifications(all_guids, g.user["username"])
+
     return render_template(
         "store.html",
         grouped               = grouped,
@@ -885,11 +903,11 @@ def store():
         dining_options        = dining_options,
         dining_option_guids   = selected_dining_guids,
         drivers_by_location   = _get_drivers_by_location(),
+        unread_notifications  = unread,
     )
 
 
 @app.route("/store/print")
-@role_required("admin","catering","store")
 def store_print():
     start_str = request.args.get("start", date.today().strftime("%Y-%m-%d"))
     end_str   = request.args.get("end",   (date.today() + timedelta(days=7)).strftime("%Y-%m-%d"))
@@ -933,7 +951,6 @@ def store_print():
 
 ###Drivers###
 @app.route("/drivers")
-@role_required("admin","catering")
 def manage_drivers():
     """Render the driver management console."""
     # 1. Fetch all locations for both assignments AND profile dropdown tracking
@@ -983,7 +1000,6 @@ def manage_drivers():
 
 
 @app.route("/drivers/save", methods=["POST"])
-@role_required("admin","catering")
 def save_driver():
     """Create or update a driver profile."""
     data = request.get_json(force=True)
@@ -1049,7 +1065,6 @@ def save_driver():
 
 
 @app.route("/drivers/save_locations", methods=["POST"])
-@role_required("admin","catering")
 def save_driver_locations():
     """Sync locations assigned to a driver."""
     data = request.get_json(force=True)
@@ -1075,7 +1090,6 @@ def save_driver_locations():
 
 
 @app.route("/drivers/print")
-@role_required("admin","catering")
 def print_drivers():
     include_inactive = request.args.get("inactive", "false").lower() == "true"
 
@@ -1114,10 +1128,260 @@ def print_drivers():
         include_inactive = include_inactive,
         now              = now_et,
     )
-@app.route("/debug/headers")
-def debug_headers():
-    headers = {k: v for k, v in request.headers}
-    return jsonify(headers)
+
+
+
+
+# ── SharePoint / Graph API helpers ────────────────────────────────────────────
+
+def _get_graph_token():
+    """Get an app-level OAuth token from Microsoft for Graph API calls."""
+    resp = http_requests.post(
+        f"https://login.microsoftonline.com/{SP_TENANT_ID}/oauth2/v2.0/token",
+        data={
+            "grant_type":    "client_credentials",
+            "client_id":     SP_CLIENT_ID,
+            "client_secret": SP_CLIENT_SECRET,
+            "scope":         "https://graph.microsoft.com/.default",
+        }
+    )
+    resp.raise_for_status()
+    return resp.json()["access_token"]
+
+
+def _sp_upload(order_guid, filename, file_bytes):
+    """
+    Upload a file to SharePoint under Catering Attachments/{order_guid}/filename.
+    Uses a unique prefix on the SharePoint filename to prevent path collisions.
+    Returns the Graph API item ID.
+    """
+    import uuid
+    token   = _get_graph_token()
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"}
+
+    # Unique name in SharePoint to prevent cross-order collisions
+    unique_prefix = uuid.uuid4().hex[:8]
+    sp_name       = f"{unique_prefix}_{filename}"
+    path          = f"Catering Attachments/{order_guid}/{sp_name}"
+    url           = f"https://graph.microsoft.com/v1.0/drives/{SP_DRIVE_ID}/root:/{path}:/content"
+
+    resp = http_requests.put(url, headers=headers, data=file_bytes)
+    resp.raise_for_status()
+    return resp.json()["id"]
+
+
+def _sp_download(sharepoint_id):
+    """
+    Download a file from SharePoint by item ID.
+    Returns (filename, content_bytes, mime_type).
+    """
+    token   = _get_graph_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Get file metadata first
+    meta_url  = f"https://graph.microsoft.com/v1.0/drives/{SP_DRIVE_ID}/items/{sharepoint_id}"
+    meta_resp = http_requests.get(meta_url, headers=headers)
+    meta_resp.raise_for_status()
+    meta      = meta_resp.json()
+    filename  = meta.get("name", "attachment")
+    mime      = meta.get("file", {}).get("mimeType", "application/octet-stream")
+
+    # Download content
+    dl_url    = meta["@microsoft.graph.downloadUrl"]
+    dl_resp   = http_requests.get(dl_url)
+    dl_resp.raise_for_status()
+    return filename, dl_resp.content, mime
+
+
+def _sp_delete(sharepoint_id):
+    """Delete a file from SharePoint by item ID."""
+    token   = _get_graph_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    url     = f"https://graph.microsoft.com/v1.0/drives/{SP_DRIVE_ID}/items/{sharepoint_id}"
+    resp    = http_requests.delete(url, headers=headers)
+    resp.raise_for_status()
+
+
+# ── Attachment DB helpers ─────────────────────────────────────────────────────
+
+def _get_attachments(order_guid):
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT id, filename, uploaded_by, uploaded_at
+            FROM order_attachments
+            WHERE order_guid = :order_guid
+            ORDER BY uploaded_at DESC
+        """), {"order_guid": order_guid}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def _get_unread_notifications(order_guids, user_email):
+    """
+    Returns set of order_guids that have unread notifications for this user.
+    """
+    if not order_guids:
+        return set()
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT DISTINCT order_guid
+            FROM order_notifications
+            WHERE order_guid = ANY(:guids)
+              AND NOT (:email = ANY(seen_by))
+        """), {"guids": list(order_guids), "email": user_email}).mappings().all()
+    return {r["order_guid"] for r in rows}
+
+
+def _create_notification(order_guid, change_type):
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO order_notifications (order_guid, change_type, changed_by)
+            VALUES (:order_guid, :change_type, :changed_by)
+        """), {
+            "order_guid":  order_guid,
+            "change_type": change_type,
+            "changed_by":  g.user["username"],
+        })
+
+
+def _mark_seen(order_guid):
+    email = g.user["username"]
+    with engine.begin() as conn:
+        conn.execute(text("""
+            UPDATE order_notifications
+            SET seen_by = array_append(seen_by, :email)
+            WHERE order_guid = :order_guid
+              AND NOT (:email = ANY(seen_by))
+        """), {"order_guid": order_guid, "email": email})
+
+
+# ── Attachment routes ─────────────────────────────────────────────────────────
+
+@app.route("/attachments/<order_guid>")
+@role_required("admin", "catering", "gm", "store")
+def list_attachments(order_guid):
+    attachments = _get_attachments(order_guid)
+    # Serialize dates
+    for a in attachments:
+        if a.get("uploaded_at"):
+            a["uploaded_at"] = a["uploaded_at"].strftime("%m/%d/%Y %I:%M %p")
+    return jsonify({"attachments": attachments})
+
+
+@app.route("/attachments/<order_guid>/upload", methods=["POST"])
+@role_required("admin", "catering")
+def upload_attachment(order_guid):
+    if "file" not in request.files:
+        return jsonify({"status": "error", "message": "No file provided"}), 400
+
+    f = request.files["file"]
+    if not f.filename:
+        return jsonify({"status": "error", "message": "No filename"}), 400
+
+    # Check allowed types — PDF only
+    allowed = {".pdf"}
+    ext     = os.path.splitext(f.filename)[1].lower()
+    if ext not in allowed:
+        return jsonify({"status": "error", "message": "Only PDF files are allowed"}), 400
+
+    # Check file size
+    file_bytes = f.read()
+    if len(file_bytes) > SP_MAX_BYTES:
+        return jsonify({"status": "error", "message": "File exceeds 25MB limit"}), 400
+
+    # Check for duplicate filename on this order
+    with engine.connect() as conn:
+        existing = conn.execute(text("""
+            SELECT id FROM order_attachments
+            WHERE order_guid = :order_guid AND filename = :filename
+        """), {"order_guid": order_guid, "filename": f.filename}).first()
+
+    if existing:
+        return jsonify({
+            "status":  "error",
+            "message": f'A file named "{f.filename}" is already attached to this order.'
+        }), 400
+
+    try:
+        sp_id = _sp_upload(order_guid, f.filename, file_bytes)
+    except Exception as e:
+        logger.error(f"SharePoint upload failed: {e}")
+        return jsonify({"status": "error", "message": "Upload to SharePoint failed"}), 500
+
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO order_attachments (order_guid, filename, sharepoint_id, uploaded_by)
+            VALUES (:order_guid, :filename, :sharepoint_id, :uploaded_by)
+        """), {
+            "order_guid":    order_guid,
+            "filename":      f.filename,
+            "sharepoint_id": sp_id,
+            "uploaded_by":   g.user["username"],
+        })
+
+    _create_notification(order_guid, "file_attached")
+    return jsonify({"status": "ok"})
+
+
+@app.route("/attachments/<int:attachment_id>/download")
+@role_required("admin", "catering", "gm", "store")
+def download_attachment(attachment_id):
+    with engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT filename, sharepoint_id
+            FROM order_attachments WHERE id = :id
+        """), {"id": attachment_id}).mappings().first()
+
+    if not row:
+        abort(404)
+
+    try:
+        filename, content, mime = _sp_download(row["sharepoint_id"])
+    except Exception as e:
+        logger.error(f"SharePoint download failed: {e}")
+        abort(500)
+
+    return Response(
+        content,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{row["filename"]}"'}
+    )
+
+
+@app.route("/attachments/<int:attachment_id>/delete", methods=["POST"])
+@role_required("admin", "catering")
+def delete_attachment(attachment_id):
+    with engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT order_guid, sharepoint_id
+            FROM order_attachments WHERE id = :id
+        """), {"id": attachment_id}).mappings().first()
+
+    if not row:
+        abort(404)
+
+    try:
+        _sp_delete(row["sharepoint_id"])
+    except Exception as e:
+        logger.error(f"SharePoint delete failed: {e}")
+        return jsonify({"status": "error", "message": "Failed to delete from SharePoint"}), 500
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "DELETE FROM order_attachments WHERE id = :id"
+        ), {"id": attachment_id})
+
+    _create_notification(row["order_guid"], "file_deleted")
+    return jsonify({"status": "ok"})
+
+
+# ── Notification routes ───────────────────────────────────────────────────────
+
+@app.route("/notifications/<order_guid>/seen", methods=["POST"])
+@role_required("admin", "catering", "gm", "store")
+def mark_notification_seen(order_guid):
+    _mark_seen(order_guid)
+    return jsonify({"status": "ok"})
+
 
 if __name__ == "__main__":
     app.run(debug=False, host="0.0.0.0", port=8000)

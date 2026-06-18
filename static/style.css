@@ -8,7 +8,7 @@
     --rule:       #ddd;
     --bg:         #f5f4f1;
     --bg-white:   #ffffff;
-    --accent:     #ffff00;
+    --accent:     #c8392b;
     --accent-dim: #f0e0de;
     --north:      #1a3a5c;
     --south:      #2c5c2c;
@@ -799,3 +799,45 @@ body {
         border-bottom: none;
     }
 }
+/* ── Attachment button & notification dot ────────────────────────────────── */
+.col-attach { width: 32px; text-align: center; }
+
+.attach-btn {
+    background: none; border: none; cursor: pointer;
+    font-size: 14px; padding: 2px 4px; border-radius: 4px;
+    position: relative; transition: background 0.12s;
+}
+.attach-btn:hover { background: #f0f0f0; }
+
+.attach-btn.has-notification::after {
+    content: '';
+    position: absolute; top: 0; right: 0;
+    width: 8px; height: 8px;
+    background: #c8392b; border-radius: 50%;
+    border: 1.5px solid #fff;
+}
+
+/* ── Attachment modal ────────────────────────────────────────────────────── */
+.attach-modal-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 16px 20px; border-bottom: 1px solid var(--rule);
+}
+.attach-modal-title {
+    font-family: var(--font-display); font-size: 16px;
+    font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+}
+.attach-file-list { padding: 12px 20px; min-height: 60px; }
+.attach-file-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 0; border-bottom: 0.5px solid var(--rule);
+    font-size: 12px;
+}
+.attach-file-item:last-child { border-bottom: none; }
+.attach-file-name { font-family: var(--font-mono); font-size: 11px; color: var(--ink); }
+.attach-file-meta { font-size: 10px; color: var(--ink-light); margin-top: 2px; }
+.attach-file-actions { display: flex; gap: 6px; }
+.attach-upload-area {
+    padding: 12px 20px; border-top: 1px solid var(--rule);
+    display: flex; gap: 8px; align-items: center;
+}
+.attach-empty { color: var(--ink-light); font-size: 12px; font-style: italic; padding: 8px 0; }
