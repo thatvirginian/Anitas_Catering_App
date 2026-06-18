@@ -564,8 +564,9 @@ def home():
 def admin():
     return render_template("admin.html")
 
-@role_required("admin","catering")
+
 @app.route("/schedule")
+@role_required("admin","catering")
 def index():
     today     = date.today()
     start_str = request.args.get("start", today.strftime("%Y-%m-%d"))
@@ -617,6 +618,7 @@ def index():
 
 
 @app.route("/save/<order_guid>", methods=["POST"])
+@role_required("admin","catering","store","gm")
 def save_order(order_guid):
     """Upsert catering_details for one order.
     Only updates fields that are present in the payload — missing fields
@@ -684,6 +686,7 @@ def save_order(order_guid):
 
 
 @app.route("/schedule/print")
+@role_required("admin","catering","store","gm")
 def print_view():
     start_str      = request.args.get("start", date.today().strftime("%Y-%m-%d"))
     end_str        = request.args.get("end",   (date.today() + timedelta(days=7)).strftime("%Y-%m-%d"))
@@ -725,6 +728,7 @@ def print_view():
 
 
 @app.route("/map/<order_guid>")
+@role_required("admin","catering","store","gm")
 def map_view(order_guid):
     """
     Returns JSON with store + delivery coordinates and travel estimate.
@@ -845,6 +849,7 @@ def map_view(order_guid):
 
 
 @app.route("/store")
+@role_required("admin","catering","store","gm")
 def store():
     today     = date.today()
     start_str = request.args.get("start", today.strftime("%Y-%m-%d"))
@@ -908,6 +913,7 @@ def store():
 
 
 @app.route("/store/print")
+@role_required("admin","catering","store","gm")
 def store_print():
     start_str = request.args.get("start", date.today().strftime("%Y-%m-%d"))
     end_str   = request.args.get("end",   (date.today() + timedelta(days=7)).strftime("%Y-%m-%d"))
@@ -951,6 +957,7 @@ def store_print():
 
 ###Drivers###
 @app.route("/drivers")
+@role_required("admin","catering")
 def manage_drivers():
     """Render the driver management console."""
     # 1. Fetch all locations for both assignments AND profile dropdown tracking
@@ -1000,6 +1007,7 @@ def manage_drivers():
 
 
 @app.route("/drivers/save", methods=["POST"])
+@role_required("admin","catering")
 def save_driver():
     """Create or update a driver profile."""
     data = request.get_json(force=True)
@@ -1065,6 +1073,7 @@ def save_driver():
 
 
 @app.route("/drivers/save_locations", methods=["POST"])
+@role_required("admin","catering")
 def save_driver_locations():
     """Sync locations assigned to a driver."""
     data = request.get_json(force=True)
@@ -1090,6 +1099,7 @@ def save_driver_locations():
 
 
 @app.route("/drivers/print")
+@role_required("admin","catering")
 def print_drivers():
     include_inactive = request.args.get("inactive", "false").lower() == "true"
 
