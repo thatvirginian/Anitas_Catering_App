@@ -387,7 +387,8 @@ def _get_store_orders(start_date, end_date, location_guids=None, dining_option_g
             ON cd.order_guid = oh.order_guid
         LEFT JOIN dining_options do_
             ON do_.guid::text = oh.dining_option_guid::text
-        WHERE oh.source = 'Catering'
+        WHERE (oh.source = 'Catering'
+          OR oh.source = 'Invoice')
           AND oh.voided = FALSE
           AND oh.estimated_fulfillment_date::date
               BETWEEN :start_date AND :end_date
@@ -489,7 +490,8 @@ def _get_orders(start_date, end_date, dining_option_guids=None):
             ON cd.order_guid = oh.order_guid
         LEFT JOIN dining_options do_
             ON do_.guid::text = oh.dining_option_guid::text
-        WHERE oh.source = 'Catering'
+        WHERE (oh.source = 'Catering'
+          OR oh.source = 'Invoice')
           AND oh.voided = FALSE
           AND oh.estimated_fulfillment_date::date
               BETWEEN :start_date AND :end_date
