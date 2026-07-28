@@ -566,9 +566,8 @@ def home():
 def admin():
     return render_template("admin.html")
 
-
-@app.route("/schedule")
 @role_required("admin","catering")
+@app.route("/schedule")
 def index():
     today     = date.today()
     start_str = request.args.get("start", today.strftime("%Y-%m-%d"))
@@ -1393,6 +1392,402 @@ def delete_attachment(attachment_id):
 def mark_notification_seen(order_guid):
     _mark_seen(order_guid)
     return jsonify({"status": "ok"})
+
+
+
+
+
+# ── Toast Order Detail ────────────────────────────────────────────────────────
+
+TOAST_API_BASE = "https://ws-api.toasttab.com"
+EASTERN = pytz.timezone("America/New_York")
+
+import platform
+DATE_FMT = "%#m/%#d/%y, %#I:%M %p" if platform.system() == "Windows" else "%-m/%-d/%y, %-I:%M %p"
+
+
+def _get_toast_token():
+    with engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT access_token
+            FROM api_tokens
+            LIMIT 1
+        """)).first()
+    if not row:
+        abort(503)
+    return row[0]
+
+
+def _fetch_toast(path, token, location_id):
+    resp = http_requests.get(
+        f"{TOAST_API_BASE}{path}",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Toast-Restaurant-External-ID": location_id,
+        },
+        timeout=15,
+    )
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _fetch_employee_name(guid, token, location_id):
+    """Fetch a single employee name by GUID. Returns empty string if not found."""
+    if not guid:
+        return ""
+    emp = _fetch_toast(f"/labor/v1/employees/{guid}", token, location_id)
+    if not emp:
+        return ""
+    return " ".join(filter(None, [emp.get("firstName"), emp.get("lastName")]))
+
+
+def _fmt_money(val):
+    try:
+        return f"${float(val or 0):,.2f}"
+    except (TypeError, ValueError):
+        return "$0.00"
+
+
+def _fmt_date(iso):
+    if not iso or str(iso).startswith("1970"):
+        return ""
+    try:
+        iso = str(iso).split("+")[0].split("Z")[0]
+        dt = datetime.strptime(iso[:26], "%Y-%m-%dT%H:%M:%S.%f").replace(tzinfo=pytz.utc).astimezone(EASTERN)
+        return dt.strftime(DATE_FMT)
+    except Exception:
+        return str(iso)
+
+
+def _fmt_biz_date(bd):
+    s = str(bd or "")
+    return f"{s[4:6]}/{s[6:8]}/{s[:4]}" if len(s) == 8 else s or "—"
+
+
+def _process_order(raw, server_name="", rc_name="", opened_by_names=None, location_name=""):
+    """Transform raw Toast API order dict into clean template context."""
+    if opened_by_names is None:
+        opened_by_names = {}
+
+    checks_raw  = raw.get("checks") or []
+    first_check = checks_raw[0] if checks_raw else {}
+    voided      = raw.get("voided", False)
+    pay_status  = first_check.get("paymentStatus") or ""
+
+    if voided:
+        status_label, status_cls = "Voided", "voided"
+    elif pay_status in ("CLOSED", "CAPTURED"):
+        status_label, status_cls = "Closed", "closed"
+    elif pay_status == "OPEN":
+        status_label, status_cls = "Open", "open"
+    else:
+        status_label, status_cls = pay_status.replace("_", " ").title() or "—", "neutral"
+
+    # Delivery info
+    di       = raw.get("deliveryInfo") or {}
+    delivery = None
+    if di:
+        parts   = [di.get("address1"), di.get("address2"),
+                   di.get("city"), di.get("state"), di.get("zipCode")]
+        address = ", ".join(p for p in parts if p)
+        delivery = {
+            "address":        address,
+            "notes":          di.get("notes") or "",
+            "delivery_state": (di.get("deliveryState") or "").replace("_", " ").title(),
+            "delivered_date": _fmt_date(di.get("deliveredDate")),
+        }
+
+    # Process checks
+    checks = []
+    for chk in checks_raw:
+        if chk.get("deleted"):
+            continue
+        chk_voided = chk.get("voided", False)
+        chk_status = chk.get("paymentStatus") or ""
+
+        if chk_voided:
+            chk_status_label, chk_status_cls = "Voided", "voided"
+        elif chk_status in ("CLOSED", "CAPTURED"):
+            chk_status_label, chk_status_cls = "Closed", "closed"
+        elif chk_status == "OPEN":
+            chk_status_label, chk_status_cls = "Open", "open"
+        else:
+            chk_status_label, chk_status_cls = chk_status.replace("_", " ").title() or "—", "neutral"
+
+        # Customer
+        cust      = chk.get("customer") or {}
+        cust_name = " ".join(filter(None, [cust.get("firstName"), cust.get("lastName")]))
+        phone     = cust.get("phone") or ""
+        if phone and len(phone) == 10:
+            phone = f"+1 {phone[:3]}-{phone[3:6]}-{phone[6:]}"
+
+        # Opened by — resolved from lookup dict passed in from route
+        check_guid  = chk.get("guid") or ""
+        opened_by   = opened_by_names.get(check_guid, "")
+
+        # Financials
+        subtotal  = chk.get("amount") or 0
+        tax       = chk.get("taxAmount") or 0
+        total     = chk.get("totalAmount") or 0
+        tip       = sum(p.get("tipAmount") or 0 for p in chk.get("payments", []))
+        gratuity  = sum(
+            sc.get("chargeAmount") or 0
+            for sc in chk.get("appliedServiceCharges", [])
+            if sc.get("gratuity")
+        )
+        disc_total = (
+            sum(float(d.get("discountAmount") or 0)
+                for s in chk.get("selections", [])
+                for d in s.get("appliedDiscounts", []))
+            + sum(float(d.get("discountAmount") or 0)
+                  for d in chk.get("appliedDiscounts", []))
+        )
+        pre_disc_total = sum(
+            sel.get("preDiscountPrice") or 0
+            for sel in chk.get("selections", [])
+            if not sel.get("deleted")
+            and sel.get("optionGroup") is None
+        )
+
+        # Items — top-level selections only
+        sel_list = []
+        for sel in chk.get("selections", []):
+            if sel.get("optionGroup") is not None:
+                continue
+
+
+            mods = ", ".join(
+                m.get("displayName", "")
+                for m in sel.get("modifiers", [])
+                if m.get("displayName")
+                and m.get("optionGroup") is not None
+            )
+            notes = [
+                m.get("displayName", "")
+                for m in sel.get("modifiers", [])
+                if m.get("selectionType") == "SPECIAL_REQUEST"
+                and m.get("displayName")
+            ]
+
+            item_disc = sum(
+                float(d.get("discountAmount") or 0)
+                for d in sel.get("appliedDiscounts", [])
+            )
+
+            qty            = sel.get("quantity") or 1
+            qty_display    = int(qty) if qty == int(qty) else qty
+            unit_price     = sel.get("receiptLinePrice") or 0
+            extended       = unit_price * qty
+            voided         = sel.get("voided", False)
+
+            sel_list.append({
+                "name":      sel.get("displayName") or "—",
+                "modifiers": mods,
+                "notes":     notes,
+                "unit_price": _fmt_money(unit_price),
+                "qty":        qty_display,
+                "extended":   _fmt_money(extended),
+                "disc":       _fmt_money(item_disc) if item_disc else "",
+                "tax":        _fmt_money(sel.get("tax")),
+                "total":      _fmt_money(sel.get("price")),
+                "voided":     voided,
+            })
+
+        # Discounts — item-level + check-level combined
+        disc_rows = []
+        for sel in chk.get("selections", []):
+            for d in sel.get("appliedDiscounts", []):
+                r   = d.get("appliedDiscountReason") or {}
+                pct = d.get("discountPercent")
+                disc_rows.append({
+                    "item":    sel.get("displayName") or "",
+                    "name":    d.get("name") or "Discount",
+                    "reason":  r.get("name") or "",
+                    "comment": r.get("comment") or "",
+                    "pct":     f"{pct:.0f}" if pct else "",
+                    "amount":  _fmt_money(d.get("discountAmount")),
+                })
+        for d in chk.get("appliedDiscounts", []):
+            r   = d.get("appliedDiscountReason") or {}
+            pct = d.get("discountPercent")
+            disc_rows.append({
+                "item":    "",
+                "name":    d.get("name") or "Discount",
+                "reason":  r.get("name") or "",
+                "comment": r.get("comment") or "",
+                "pct":     f"{pct:.0f}" if pct else "",
+                "amount":  _fmt_money(d.get("discountAmount")),
+            })
+
+        # Service charges
+        svc_list = []
+        for sc in chk.get("appliedServiceCharges", []):
+            svc_list.append({
+                "name":     sc.get("name") or "—",
+                "gratuity": sc.get("gratuity", False),
+                "amount":   _fmt_money(sc.get("chargeAmount")),
+                "tax":      _fmt_money(sum(
+                    t.get("taxAmount", 0) for t in sc.get("appliedTaxes", [])
+                )),
+                "refund":   _fmt_money((sc.get("refundDetails") or {}).get("refundAmount")),
+            })
+
+        # Payments
+        pay_list = []
+        for p in chk.get("payments", []):
+            ptype = (p.get("type") or "").upper()
+            if p.get("cardType"):
+                method = p["cardType"].title()
+                if p.get("last4Digits"):
+                    method += f" ···{p['last4Digits']}"
+            elif ptype == "CASH":
+                method = "Cash"
+            elif ptype == "GIFT_CARD":
+                method = "Gift Card"
+            else:
+                method = ptype.replace("_", " ").title() or "—"
+
+            ps = (p.get("paymentStatus") or "").upper()
+            if ps == "CAPTURED":
+                p_label, p_cls = "Captured", "captured"
+            elif ps == "VOIDED":
+                p_label, p_cls = "Voided", "voided"
+            elif ps == "OPEN":
+                p_label, p_cls = "Open", "open"
+            else:
+                p_label, p_cls = ps.replace("_", " ").title() or "—", "neutral"
+
+            refund_obj = p.get("refund") or {}
+            pay_total  = (p.get("amount") or 0) + (p.get("tipAmount") or 0)
+
+            pay_list.append({
+                "method":       method,
+                "date":         _fmt_date(p.get("paidDate")),
+                "amount":       _fmt_money(p.get("amount")),
+                "tip":          _fmt_money(p.get("tipAmount")),
+                "gratuity":     _fmt_money(p.get("gratuityAmount")),
+                "total":        _fmt_money(pay_total),
+                "refund":       _fmt_money(refund_obj.get("refundAmount")),
+                "status_label": p_label,
+                "status_cls":   p_cls,
+            })
+
+        checks.append({
+            "guid":           check_guid,
+            "display_number": chk.get("displayNumber") or "—",
+            "status_label":   chk_status_label,
+            "status_cls":     chk_status_cls,
+            "voided":         chk_voided,
+            "void_date":      _fmt_date(chk.get("voidDate")),
+            "tab_name":       chk.get("tabName") or "",
+            "customer_name":  cust_name,
+            "customer_phone": phone,
+            "customer_email": cust.get("email") or "",
+            "opened_by":      opened_by,
+            "opened":         _fmt_date(chk.get("openedDate")),
+            "closed":         _fmt_date(chk.get("closedDate")),
+            "paid":           _fmt_date(chk.get("paidDate")),
+            "subtotal":       _fmt_money(subtotal),
+            "tax":            _fmt_money(tax),
+            "tip":            _fmt_money(tip) if tip else "",
+            "gratuity":       _fmt_money(gratuity) if gratuity else "",
+            "disc_total":     _fmt_money(disc_total) if disc_total else "",
+            "total":          _fmt_money(total),
+            "sel_list":       sel_list,
+            "disc_rows":      disc_rows,
+            "svc_list":       svc_list,
+            "pay_list":       pay_list,
+            "pre_disc_total": _fmt_money(pre_disc_total) if pre_disc_total else "",
+        })
+
+    grand_total = sum(c.get("totalAmount") or 0 for c in checks_raw)
+    grand_disc  = (
+        sum(float(d.get("discountAmount") or 0)
+            for c in checks_raw
+            for s in c.get("selections", [])
+            for d in s.get("appliedDiscounts", []))
+        + sum(float(d.get("discountAmount") or 0)
+              for c in checks_raw
+              for d in c.get("appliedDiscounts", []))
+    )
+
+    return {
+        "guid":          raw.get("guid") or "",
+        "display_number": raw.get("displayNumber") or "—",
+        "status_label":  status_label,
+        "status_cls":    status_cls,
+        "source":        raw.get("source") or "—",
+        "business_date": _fmt_biz_date(raw.get("businessDate")),
+        "num_guests":    raw.get("numberOfGuests") or "—",
+        "opened":        _fmt_date(raw.get("openedDate")),
+        "closed":        _fmt_date(raw.get("closedDate")),
+        "grand_total":   _fmt_money(grand_total),
+        "grand_disc":    _fmt_money(grand_disc) if grand_disc else "",
+        "delivery":      delivery,
+        "server_name":   server_name,
+        "rc_name":       rc_name,
+        "checks":        checks,
+        "location_name": location_name,
+    }
+
+
+@app.route("/order/<order_guid>")
+@role_required("admin", "catering", "gm", "store")
+def order_detail(order_guid):
+    # 1. Get location_id from DB
+    with engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT oh.location_id::text, l.location_name, l.abbreviation
+            FROM orders_head oh
+            JOIN locations l ON l.store_guid::text = oh.location_id
+            WHERE oh.order_guid = :guid
+            LIMIT 1
+        """), {"guid": order_guid}).first()
+
+    if not row:
+        abort(404)
+
+    location_id = row[0]
+    location_name = row[1] or ""
+    token       = _get_toast_token()
+
+    # 2. Fetch order
+    order_raw = _fetch_toast(f"/orders/v2/orders/{order_guid}", token, location_id)
+    if not order_raw:
+        abort(404)
+
+    # 3. Fetch server name
+    server_name = _fetch_employee_name(
+        (order_raw.get("server") or {}).get("guid"), token, location_id
+    )
+
+    # 4. Fetch revenue center name
+    rc_name = ""
+    rc_guid = (order_raw.get("revenueCenter") or {}).get("guid")
+    if rc_guid:
+        rc = _fetch_toast(f"/config/v2/revenueCenters/{rc_guid}", token, location_id)
+        if rc:
+            rc_name = rc.get("name") or ""
+
+    # 5. Fetch opened_by name per check
+    opened_by_names = {}
+    for chk in order_raw.get("checks") or []:
+        ob_guid = (chk.get("openedBy") or {}).get("guid")
+        if ob_guid:
+            name = _fetch_employee_name(ob_guid, token, location_id)
+            if name:
+                opened_by_names[chk.get("guid")] = name
+
+    # 6. Process and render
+    order = _process_order(order_raw, server_name, rc_name, opened_by_names, location_name)
+    return render_template("order_detail.html", order=order)
+
+
+
+
+
 
 
 if __name__ == "__main__":

@@ -1,0 +1,785 @@
+{% extends "base.html" %}
+
+{% block title %}Order #{{ order.display_number }} — Anita's{% endblock %}
+
+{% block head %}
+<style>
+    .order-page {
+        max-width: 1040px;
+        margin: 0 auto;
+        padding: 28px 24px 60px;
+        font-family: 'Times New Roman', Times, serif;
+    }
+
+    /* ── Header ── */
+    .order-header {
+        margin-bottom: 20px;
+        padding-bottom: 16px;
+        border-bottom: 2px solid #1a1a1a;
+    }
+    .order-header-top {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        margin-bottom: 5px;
+    }
+    .order-title {
+        font-family: 'Barlow Condensed', sans-serif;
+        font-size: 28px;
+        font-weight: 800;
+        letter-spacing: -0.5px;
+        color: #1a1a1a;
+    }
+    .order-header-meta {
+        font-family: 'DM Mono', monospace;
+        font-size: 11px;
+        color: #999;
+        line-height: 1.9;
+    }
+    .order-header-meta span { margin-right: 20px; }
+
+    /* ── Badges ── */
+    .status-badge {
+        font-family: 'Barlow Condensed', sans-serif;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+        padding: 3px 10px;
+        border-radius: 99px;
+    }
+    .badge-closed   { background: #dcfce7; color: #15803d; }
+    .badge-voided   { background: #fee2e2; color: #b91c1c; }
+    .badge-open     { background: #dbeafe; color: #1d4ed8; }
+    .badge-captured { background: #dcfce7; color: #15803d; }
+    .badge-neutral  { background: #f3f4f6; color: #374151; }
+
+    /* ── Summary strip ── */
+    .summary-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1px;
+        background: #e4e2de;
+        border: 1px solid #e4e2de;
+        border-radius: 8px;
+        overflow: hidden;
+        margin-bottom: 20px;
+    }
+    .summary-cell {
+        background: #fff;
+        padding: 10px 16px;
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+    .summary-row {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        white-space: nowrap;
+        line-height: 1.7;
+    }
+    .summary-row-label {
+        font-family: 'Barlow Condensed', sans-serif;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        color: #aaa;
+        flex-shrink: 0;
+    }
+    .summary-row-label::after { content: ':'; }
+    .summary-row-value {
+        font-family: 'Times New Roman', Times, serif;
+        font-size: 13px;
+        font-weight: 700;
+        color: #1a1a1a;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .summary-row-value.red { color: #b91c1c; }
+
+    /* ── Delivery banner ── */
+    .delivery-banner {
+        background: #fffbeb;
+        border: 1px solid #fcd34d;
+        border-radius: 8px;
+        padding: 14px 18px;
+        margin-bottom: 20px;
+    }
+    .delivery-banner-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 6px;
+    }
+    .delivery-banner-title {
+        font-family: 'Barlow Condensed', sans-serif;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.6px;
+        text-transform: uppercase;
+        color: #92400e;
+    }
+    .delivery-state-pill {
+        font-family: 'Barlow Condensed', sans-serif;
+        font-size: 10px;
+        font-weight: 700;
+        color: #15803d;
+        background: #dcfce7;
+        padding: 1px 8px;
+        border-radius: 99px;
+        letter-spacing: 0.3px;
+    }
+    .delivery-address {
+        font-family: 'Times New Roman', Times, serif;
+        font-size: 14px;
+        font-weight: 700;
+        color: #1a1a1a;
+        margin-bottom: 6px;
+    }
+    .delivery-notes {
+        font-family: 'Times New Roman', Times, serif;
+        font-size: 13px;
+        color: #555;
+        line-height: 1.6;
+        border-top: 1px solid #fcd34d;
+        padding-top: 8px;
+        margin-top: 6px;
+    }
+
+    /* ── Unified check block ── */
+    .check-block {
+        border: 1px solid #e4e2de;
+        border-radius: 10px;
+        overflow: hidden;
+        margin-bottom: 20px;
+    }
+
+    /* Check header bar */
+    .check-block-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 18px;
+        background: #1a1a1a;
+        border-bottom: 2px solid #1a1a1a;
+        cursor: pointer;
+        user-select: none;
+    }
+    .check-block-header .check-block-title { color: #fff; }
+    .check-block-header .check-block-guid  { color: #555; }
+    .check-block-title {
+        font-family: 'Barlow Condensed', sans-serif;
+        font-size: 15px;
+        font-weight: 800;
+        letter-spacing: 0.2px;
+        color: #1a1a1a;
+        text-transform: uppercase;
+    }
+    .check-block-guid {
+        font-family: 'DM Mono', monospace;
+        font-size: 10px;
+        color: #ccc;
+        margin-left: auto;
+    }
+    .check-toggle {
+        font-size: 12px;
+        color: #666;
+        transition: transform 0.2s ease;
+        flex-shrink: 0;
+    }
+    .check-block-header.collapsed .check-toggle {
+        transform: rotate(-90deg);
+    }
+
+    /* Collapsible body */
+    .check-block-body {
+        overflow: hidden;
+        transition: max-height 0.25s ease;
+        max-height: 5000px;
+    }
+    .check-block-body.collapsed {
+        max-height: 0;
+    }
+
+    /* Void strip */
+    .void-strip {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        background: #fef2f2;
+        border-bottom: 1px solid #fca5a5;
+        padding: 8px 18px;
+    }
+    .void-strip-label {
+        font-family: 'Barlow Condensed', sans-serif;
+        font-size: 12px;
+        font-weight: 700;
+        color: #b91c1c;
+    }
+    .void-strip-date {
+        font-family: 'DM Mono', monospace;
+        font-size: 11px;
+        color: #b91c1c;
+        opacity: 0.75;
+    }
+
+    /* Check detail + financials */
+    .check-detail-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        border-bottom: 1px solid #e4e2de;
+    }
+    .check-detail-left {
+        padding: 14px 18px;
+        border-right: 1px solid #e4e2de;
+    }
+    .check-detail-right {
+        padding: 14px 18px;
+    }
+
+    .detail-label {
+        font-family: 'Barlow Condensed', sans-serif;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.6px;
+        text-transform: uppercase;
+        color: #aaa;
+        margin-top: 10px;
+        margin-bottom: 1px;
+    }
+    .detail-label:first-child { margin-top: 0; }
+    .detail-value {
+        font-family: 'Times New Roman', Times, serif;
+        font-size: 13px;
+        color: #1a1a1a;
+    }
+    .detail-sub {
+        font-family: 'Barlow', sans-serif;
+        font-size: 11px;
+        color: #888;
+        margin-top: 1px;
+    }
+
+    /* Financials */
+    .fin-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        padding: 4px 0;
+        border-bottom: 1px solid #f5f4f2;
+    }
+    .fin-row:last-child { border-bottom: none; }
+    .fin-label {
+        font-family: 'Times New Roman', Times, serif;
+        font-size: 13px;
+        color: #666;
+    }
+    .fin-value {
+        font-family: 'DM Mono', monospace;
+        font-size: 13px;
+        color: #1a1a1a;
+        font-variant-numeric: tabular-nums;
+    }
+    .fin-row.fin-disc .fin-label,
+    .fin-row.fin-disc .fin-value { color: #b91c1c; }
+    .fin-row.fin-total {
+        border-top: 2px solid #1a1a1a;
+        border-bottom: none;
+        margin-top: 4px;
+        padding-top: 8px;
+    }
+    .fin-row.fin-total .fin-label {
+        font-weight: 700;
+        color: #1a1a1a;
+        font-size: 14px;
+    }
+    .fin-row.fin-total .fin-value {
+        font-size: 15px;
+        font-weight: 700;
+    }
+
+    /* Inner section headers within check block */
+    .check-section-header {
+        display: flex;
+        align-items: center;
+        padding: 8px 18px;
+        background: #f0efed;
+        border-top: 2px solid #d4d2ce;
+        border-bottom: 1px solid #d4d2ce;
+    }
+    .check-section-title {
+        font-family: 'Barlow Condensed', sans-serif;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        color: #666;
+    }
+
+    /* Tables */
+    .od-table-wrap { overflow-x: auto; }
+    .od-table { width: 100%; border-collapse: collapse; }
+    .od-table thead th {
+        font-family: 'Barlow Condensed', sans-serif;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        color: #888;
+        text-align: right;
+        padding: 9px 14px;
+        white-space: nowrap;
+        background: #fff;
+        border-bottom: 1px solid #e4e2de;
+    }
+    .od-table thead th.al { text-align: left; }
+    .od-table tbody tr { border-bottom: 1px solid #f5f4f2; }
+    .od-table tbody tr:last-child { border-bottom: none; }
+    .od-table tbody tr:hover { background: #fafaf9; }
+    .od-table tbody td {
+        font-family: 'Times New Roman', Times, serif;
+        font-size: 13px;
+        color: #1a1a1a;
+        padding: 10px 14px;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        vertical-align: top;
+    }
+    .od-table tbody td.al    { text-align: left; }
+    .od-table tbody td.muted { color: #aaa; font-size: 11px; font-family: 'DM Mono', monospace; }
+    .od-table tbody td.fw    { font-weight: 700; }
+    .od-table tbody td.red   { color: #b91c1c; }
+    .od-table tbody td.empty {
+        text-align: center;
+        color: #bbb;
+        font-style: italic;
+        padding: 24px;
+    }
+
+    .item-name  { font-weight: 700; }
+    .item-mods  { font-size: 12px; color: #888; margin-top: 2px; font-family: 'Barlow', sans-serif; }
+    .item-note  { font-size: 12px; color: #aaa; font-style: italic; margin-top: 2px; }
+
+    .voided-row td { color: #ccc; }
+    .voided-row .item-name { text-decoration: line-through; }
+    .voided-yes {
+        font-family: 'Barlow Condensed', sans-serif;
+        font-size: 10px;
+        font-weight: 700;
+        color: #b91c1c;
+        background: #fee2e2;
+        padding: 1px 7px;
+        border-radius: 99px;
+    }
+    .voided-no {
+        font-family: 'DM Mono', monospace;
+        font-size: 11px;
+        color: #ccc;
+    }
+
+    .disc-name {
+        font-family: 'Barlow Condensed', sans-serif;
+        font-size: 13px;
+        font-weight: 700;
+        color: #1a1a1a;
+    }
+    .disc-pct {
+        font-size: 10px;
+        color: #b91c1c;
+        background: #fee2e2;
+        padding: 1px 5px;
+        border-radius: 99px;
+        margin-left: 4px;
+        font-family: 'Barlow Condensed', sans-serif;
+        font-weight: 700;
+    }
+    .disc-reason  { font-size: 12px; color: #666; margin-top: 2px; font-family: 'Barlow', sans-serif; }
+    .disc-comment { font-size: 12px; color: #999; font-style: italic; margin-top: 1px; }
+    .check-level-tag { font-size: 12px; color: #aaa; font-style: italic; }
+
+    .st-pill {
+        font-family: 'Barlow Condensed', sans-serif;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.3px;
+        padding: 2px 9px;
+        border-radius: 99px;
+    }
+    .st-captured { background: #dcfce7; color: #15803d; }
+    .st-voided   { background: #fee2e2; color: #b91c1c; }
+    .st-open     { background: #dbeafe; color: #1d4ed8; }
+    .st-neutral  { background: #f3f4f6; color: #374151; }
+
+    @media (max-width: 640px) {
+        .check-detail-row { grid-template-columns: 1fr; }
+        .check-detail-left { border-right: none; border-bottom: 1px solid #e4e2de; }
+        .summary-strip { grid-template-columns: 1fr 1fr; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="order-page">
+
+    {# ── Header ── #}
+    <div class="order-header">
+        <div class="order-header-top">
+            <span class="order-title">Order #{{ order.display_number }}</span>
+            <span class="status-badge badge-{{ order.status_cls }}">{{ order.status_label }}</span>
+        </div>
+        <div class="order-header-meta">
+            <span>Location: {{ order.location_name }}</span>
+            <span>Source: {{ order.source }}</span>
+            <span>Date: {{ order.business_date }}</span>
+            <span>Opened: {{ order.opened }}</span>
+            {% if order.closed %}<span>Closed {{ order.closed }}</span>{% endif %}
+            <span><a href="https://www.toasttab.com/restaurants/toast/audit/home?orderId={{ order.guid }}" target="_blank" style="color:#aaa;text-decoration:underline;font-family:'DM Mono',monospace;font-size:11px">View Audit in Toast ↗</a></span>
+        </div>
+    </div>
+
+    {# ── Summary strip ── #}
+    <div class="summary-strip">
+        <div class="summary-cell">
+            <div class="summary-row">
+                <span class="summary-row-label">Total</span>
+                <span class="summary-row-value">{{ order.grand_total }}</span>
+            </div>
+            {% if order.grand_disc %}
+            <div class="summary-row">
+                <span class="summary-row-label">Discounts</span>
+                <span class="summary-row-value red">-{{ order.grand_disc }}</span>
+            </div>
+            {% endif %}
+        </div>
+        <div class="summary-cell">
+            <div class="summary-row">
+                <span class="summary-row-label">Guests</span>
+                <span class="summary-row-value">{{ order.num_guests }}</span>
+            </div>
+            <div class="summary-row">
+                <span class="summary-row-label">Checks</span>
+                <span class="summary-row-value">{{ order.checks | length }}</span>
+            </div>
+        </div>
+        {% if order.server_name or order.rc_name %}
+        <div class="summary-cell">
+            {% if order.server_name %}
+            <div class="summary-row">
+                <span class="summary-row-label">Server</span>
+                <span class="summary-row-value">{{ order.server_name }}</span>
+            </div>
+            {% endif %}
+            {% if order.rc_name %}
+            <div class="summary-row">
+                <span class="summary-row-label">Rev. Center</span>
+                <span class="summary-row-value">{{ order.rc_name }}</span>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        {% if order.delivery %}
+        <div class="summary-cell">
+            <div class="summary-row">
+                <span class="summary-row-label">Delivery</span>
+                <span class="summary-row-value">{{ order.delivery.delivery_state }}</span>
+            </div>
+            {% if order.delivery.delivered_date %}
+            <div class="summary-row">
+                <span class="summary-row-label">Delivered</span>
+                <span class="summary-row-value">{{ order.delivery.delivered_date }}</span>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+
+    {# ── Delivery banner ── #}
+    {% if order.delivery %}
+    <div class="delivery-banner">
+        <div class="delivery-banner-header">
+            <span class="delivery-banner-title">Delivery</span>
+            {% if order.delivery.delivery_state %}
+            <span class="delivery-state-pill">{{ order.delivery.delivery_state }}</span>
+            {% endif %}
+            {% if order.delivery.delivered_date %}
+            <span style="font-family:'DM Mono',monospace;font-size:11px;color:#92400e;opacity:0.7">{{ order.delivery.delivered_date }}</span>
+            {% endif %}
+        </div>
+        {% if order.delivery.address %}
+        <div class="delivery-address">{{ order.delivery.address }}</div>
+        {% endif %}
+        {% if order.delivery.notes %}
+        <div class="delivery-notes">{{ order.delivery.notes }}</div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {# ── Checks ── #}
+    {% for check in order.checks %}
+    <div class="check-block">
+
+        {# Check header #}
+        <div class="check-block-header" onclick="toggleCheck(this)">
+            <span class="check-block-title">Check #{{ check.display_number }}</span>
+            <span class="status-badge badge-{{ check.status_cls }}">{{ check.status_label }}</span>
+            <span class="check-block-guid">{{ check.guid }}</span>
+            <span class="check-toggle">▾</span>
+        </div>
+
+        <div class="check-block-body">
+
+        {# Void strip #}
+        {% if check.voided %}
+        <div class="void-strip">
+            <span class="void-strip-label">⊘ Voided</span>
+            {% if check.void_date %}<span class="void-strip-date">{{ check.void_date }}</span>{% endif %}
+        </div>
+        {% endif %}
+
+        {# Detail + financials #}
+        <div class="check-detail-row">
+            <div class="check-detail-left">
+                {% if check.customer_name %}
+                <div class="detail-label">Customer</div>
+                <div class="detail-value">{{ check.customer_name }}</div>
+                {% if check.customer_phone %}<div class="detail-sub">{{ check.customer_phone }}</div>{% endif %}
+                {% if check.customer_email %}<div class="detail-sub">{{ check.customer_email }}</div>{% endif %}
+                {% endif %}
+
+                {% if check.tab_name %}
+                <div class="detail-label">Tab name</div>
+                <div class="detail-value">{{ check.tab_name }}</div>
+                {% endif %}
+
+                {% if check.opened_by %}
+                <div class="detail-label">Opened by</div>
+                <div class="detail-value">{{ check.opened_by }}</div>
+                {% endif %}
+
+                <div class="detail-label">Opened</div>
+                <div class="detail-value">{{ check.opened }}</div>
+
+                {% if check.closed %}
+                <div class="detail-label">Closed</div>
+                <div class="detail-value">{{ check.closed }}</div>
+                {% endif %}
+
+                {% if check.paid %}
+                <div class="detail-label">Paid</div>
+                <div class="detail-value">{{ check.paid }}</div>
+                {% endif %}
+            </div>
+
+            <div class="check-detail-right">
+                {% if check.pre_disc_total %}
+                <div class="fin-row">
+                    <span class="fin-label">Pre-discount Total</span>
+                    <span class="fin-value">{{ check.pre_disc_total }}</span>
+                </div>
+                {% endif %}
+                {% if check.disc_total %}
+                <div class="fin-row fin-disc">
+                    <span class="fin-label">Discounts</span>
+                    <span class="fin-value">-{{ check.disc_total }}</span>
+                </div>
+                {% endif %}
+                <div class="fin-row">
+                    <span class="fin-label">Subtotal</span>
+                    <span class="fin-value">{{ check.subtotal }}</span>
+                </div>
+                <div class="fin-row">
+                    <span class="fin-label">Tax</span>
+                    <span class="fin-value">{{ check.tax }}</span>
+                </div>
+                {% if check.gratuity %}
+                <div class="fin-row">
+                    <span class="fin-label">Gratuity</span>
+                    <span class="fin-value">{{ check.gratuity }}</span>
+                </div>
+                {% endif %}
+                {% if check.tip %}
+                <div class="fin-row">
+                    <span class="fin-label">Tip</span>
+                    <span class="fin-value">{{ check.tip }}</span>
+                </div>
+                {% endif %}
+                <div class="fin-row fin-total">
+                    <span class="fin-label">Total</span>
+                    <span class="fin-value">{{ check.total }}</span>
+                </div>
+            </div>
+        </div>
+
+        {# Items #}
+        <div class="check-section-header">
+            <span class="check-section-title">Items</span>
+        </div>
+        <div class="od-table-wrap">
+            <table class="od-table">
+                <thead>
+                    <tr>
+                        <th class="al">Item</th>
+                        <th>Unit price</th>
+                        <th>Qty</th>
+                        <th>Extended</th>
+                        <th>Discount</th>
+                        <th>Tax</th>
+                        <th>Total</th>
+                        <th>Voided</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if check.sel_list %}
+                    {% for item in check.sel_list %}
+                    <tr class="{{ 'voided-row' if item.voided else '' }}">
+                        <td class="al">
+                            <div class="item-name">{{ item.name }}</div>
+                            {% if item.modifiers %}
+                            <div class="item-mods">{{ item.modifiers }}</div>
+                            {% endif %}
+                            {% for note in item.notes %}
+                            <div class="item-note">"{{ note }}"</div>
+                            {% endfor %}
+                        </td>
+                        <td>{{ item.unit_price }}</td>
+                        <td>{{ item.qty }}</td>
+                        <td>{{ item.extended }}</td>
+                        <td class="red">{{ '-' + item.disc if item.disc else '—' }}</td>
+                        <td>{{ item.tax }}</td>
+                        <td class="fw">{{ item.total }}</td>
+                        <td>
+                            {% if item.voided %}
+                            <span class="voided-yes">Yes</span>
+                            {% else %}
+                            <span class="voided-no">—</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% else %}
+                    <tr><td colspan="8" class="empty">No items on this order</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+
+        {# Discounts — conditional #}
+        {% if check.disc_rows %}
+        <div class="check-section-header">
+            <span class="check-section-title">Discounts</span>
+        </div>
+        <div class="od-table-wrap">
+            <table class="od-table">
+                <thead>
+                    <tr>
+                        <th class="al">Item</th>
+                        <th class="al">Discount</th>
+                        <th>Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for d in check.disc_rows %}
+                    <tr>
+                        <td class="al">
+                            {% if d.item %}{{ d.item }}
+                            {% else %}<span class="check-level-tag">Check level</span>{% endif %}
+                        </td>
+                        <td class="al">
+                            <span class="disc-name">{{ d.name }}</span>
+                            {% if d.pct %}<span class="disc-pct">{{ d.pct }}%</span>{% endif %}
+                            {% if d.reason %}<div class="disc-reason">{{ d.reason }}</div>{% endif %}
+                            {% if d.comment %}<div class="disc-comment">"{{ d.comment }}"</div>{% endif %}
+                        </td>
+                        <td class="red">-{{ d.amount }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+
+        {# Service charges — conditional #}
+        {% if check.svc_list %}
+        <div class="check-section-header">
+            <span class="check-section-title">Service Charges</span>
+        </div>
+        <div class="od-table-wrap">
+            <table class="od-table">
+                <thead>
+                    <tr>
+                        <th class="al">Name</th>
+                        <th class="al">Gratuity</th>
+                        <th>Amount</th>
+                        <th>Tax</th>
+                        <th>Refund</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for sc in check.svc_list %}
+                    <tr>
+                        <td class="al">{{ sc.name }}</td>
+                        <td class="al">{{ 'Yes' if sc.gratuity else 'No' }}</td>
+                        <td>{{ sc.amount }}</td>
+                        <td>{{ sc.tax }}</td>
+                        <td>{{ sc.refund }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+
+        {# Payments #}
+        <div class="check-section-header">
+            <span class="check-section-title">Payments</span>
+        </div>
+        <div class="od-table-wrap">
+            <table class="od-table">
+                <thead>
+                    <tr>
+                        <th class="al">Method</th>
+                        <th>Date</th>
+                        <th>Amount</th>
+                        <th>Tip</th>
+                        <th>Gratuity</th>
+                        <th>Total</th>
+                        <th>Refund</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if check.pay_list %}
+                    {% for p in check.pay_list %}
+                    <tr>
+                        <td class="al">{{ p.method }}</td>
+                        <td>{{ p.date }}</td>
+                        <td>{{ p.amount }}</td>
+                        <td>{{ p.tip }}</td>
+                        <td>{{ p.gratuity }}</td>
+                        <td class="fw">{{ p.total }}</td>
+                        <td>{{ p.refund }}</td>
+                        <td><span class="st-pill st-{{ p.status_cls }}">{{ p.status_label }}</span></td>
+                    </tr>
+                    {% endfor %}
+                    {% else %}
+                    <tr><td colspan="8" class="empty">No payments</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+
+        </div>{# end check-block-body #}
+    </div>{# end check-block #}
+    {% endfor %}
+
+</div>
+
+<script>
+function toggleCheck(header) {
+    const body = header.nextElementSibling;
+    header.classList.toggle('collapsed');
+    body.classList.toggle('collapsed');
+}
+</script>
+{% endblock %}
