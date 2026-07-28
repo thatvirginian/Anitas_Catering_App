@@ -1734,7 +1734,6 @@ def _process_order(raw, server_name="", rc_name="", opened_by_names=None, locati
 
 
 @app.route("/order/<order_guid>")
-@role_required("admin", "catering", "gm", "store")
 def order_detail(order_guid):
     # 1. Get location_id from DB
     with engine.connect() as conn:
