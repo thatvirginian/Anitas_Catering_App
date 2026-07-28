@@ -675,6 +675,7 @@
                     <tr>
                         <th class="al">Item</th>
                         <th class="al">Discount</th>
+                        <th class="al">Approver</th>
                         <th>Amount</th>
                     </tr>
                 </thead>
@@ -696,6 +697,7 @@
                             {% endif %}
                             {% if d.comment %}<div class="disc-comment">"{{ d.comment }}"</div>{% endif %}
                         </td>
+                        <td class="al">{{ d.approver }}</td>
                         <td class="red">-{{ d.amount }}</td>
                     </tr>
                     {% endfor %}

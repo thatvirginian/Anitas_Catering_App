@@ -1466,10 +1466,12 @@ def _fmt_biz_date(bd):
     return f"{s[4:6]}/{s[6:8]}/{s[:4]}" if len(s) == 8 else s or "—"
 
 
-def _process_order(raw, server_name="", rc_name="", opened_by_names=None, location_name=""):
+def _process_order(raw, server_name="", rc_name="", opened_by_names=None, location_name="", approver_names=None):
     """Transform raw Toast API order dict into clean template context."""
     if opened_by_names is None:
         opened_by_names = {}
+    if approver_names is None:
+        approver_names = {}
 
     checks_raw  = raw.get("checks") or []
     first_check = checks_raw[0] if checks_raw else {}
@@ -1602,23 +1604,25 @@ def _process_order(raw, server_name="", rc_name="", opened_by_names=None, locati
                 r   = d.get("appliedDiscountReason") or {}
                 pct = d.get("discountPercent")
                 disc_rows.append({
-                    "item":    sel.get("displayName") or "",
-                    "name":    d.get("name") or "Discount",
-                    "reason":  r.get("name") or "",
+                    "item": sel.get("displayName") or "",
+                    "name": d.get("name") or "Discount",
+                    "reason": r.get("name") or "",
                     "comment": r.get("comment") or "",
-                    "pct":     f"{pct:.0f}" if pct else "",
-                    "amount":  _fmt_money(d.get("discountAmount")),
+                    "pct": f"{pct:.0f}" if pct else "",
+                    "amount": _fmt_money(d.get("discountAmount")),
+                    "approver": approver_names.get((d.get("approver") or {}).get("guid") or "", ""),
                 })
         for d in chk.get("appliedDiscounts", []):
             r   = d.get("appliedDiscountReason") or {}
             pct = d.get("discountPercent")
             disc_rows.append({
-                "item":    "",
-                "name":    d.get("name") or "Discount",
-                "reason":  r.get("name") or "",
+                "item": "",
+                "name": d.get("name") or "Discount",
+                "reason": r.get("name") or "",
                 "comment": r.get("comment") or "",
-                "pct":     f"{pct:.0f}" if pct else "",
-                "amount":  _fmt_money(d.get("discountAmount")),
+                "pct": f"{pct:.0f}" if pct else "",
+                "amount": _fmt_money(d.get("discountAmount")),
+                "approver": approver_names.get((d.get("approver") or {}).get("guid") or "", ""),
             })
 
         # Service charges
@@ -1734,6 +1738,7 @@ def _process_order(raw, server_name="", rc_name="", opened_by_names=None, locati
 
 
 @app.route("/order/<order_guid>")
+@role_required("admin", "catering", "gm", "store")
 def order_detail(order_guid):
     # 1. Get location_id from DB
     with engine.connect() as conn:
@@ -1778,9 +1783,26 @@ def order_detail(order_guid):
             name = _fetch_employee_name(ob_guid, token, location_id)
             if name:
                 opened_by_names[chk.get("guid")] = name
+    # 6. Collect and resolve discount approver GUIDs
+    approver_guids = set()
+    for chk in order_raw.get("checks") or []:
+        for sel in chk.get("selections", []):
+            for d in sel.get("appliedDiscounts", []):
+                guid = (d.get("approver") or {}).get("guid")
+                if guid:
+                    approver_guids.add(guid)
+        for d in chk.get("appliedDiscounts", []):
+            guid = (d.get("approver") or {}).get("guid")
+            if guid:
+                approver_guids.add(guid)
 
-    # 6. Process and render
-    order = _process_order(order_raw, server_name, rc_name, opened_by_names, location_name)
+    approver_names = {}
+    for guid in approver_guids:
+        name = _fetch_employee_name(guid, token, location_id)
+        if name:
+            approver_names[guid] = name
+    # 7. Process and render
+    order = _process_order(order_raw, server_name, rc_name, opened_by_names, location_name, approver_names)
     return render_template("order_detail.html", order=order)
 
 
