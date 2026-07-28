@@ -688,7 +688,12 @@
                         <td class="al">
                             <span class="disc-name">{{ d.name }}</span>
                             {% if d.pct %}<span class="disc-pct">{{ d.pct }}%</span>{% endif %}
-                            {% if d.reason %}<div class="disc-reason">{{ d.reason }}</div>{% endif %}
+                            {% if d.reason %}
+                                        <u>
+                                            <span class="disc-reason">Reason: </span>
+                                            <span class="disc-reason">{{ d.reason }}</span>
+                                        </u>
+                            {% endif %}
                             {% if d.comment %}<div class="disc-comment">"{{ d.comment }}"</div>{% endif %}
                         </td>
                         <td class="red">-{{ d.amount }}</td>
