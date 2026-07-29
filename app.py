@@ -911,6 +911,25 @@ def store():
     all_guids = [o["order_guid"] for data in grouped.values() for o in data["orders"]]
     unread    = _get_unread_notifications(all_guids, g.user["username"])
 
+    t0 = time.time()
+    locations = _get_store_locations_for_user(g.user)
+    t1 = time.time()
+    dining_options = _get_dining_options()
+    t2 = time.time()
+    grouped = _get_store_orders(
+        start_date, end_date,
+        selected_locations or None,
+        selected_dining_guids or None,
+    )
+    t3 = time.time()
+    drivers = _get_drivers_by_location()
+    t4 = time.time()
+
+    print(f"[STORE] locations={t1 - t0:.2f}s dining={t2 - t1:.2f}s orders={t3 - t2:.2f}s drivers={t4 - t3:.2f}s")
+
+
+
+
     return render_template(
         "store.html",
         grouped               = grouped,
@@ -1479,6 +1498,24 @@ def _fmt_biz_date(bd):
     return f"{s[4:6]}/{s[6:8]}/{s[:4]}" if len(s) == 8 else s or "—"
 
 
+def _collect_mods(modifiers, depth=0):
+    """Recursively collect modifier display info with depth for HTML indentation."""
+    parts = []
+    for m in modifiers:
+        if not m.get("displayName") or m.get("optionGroup") is None:
+            continue
+        name  = m.get("displayName", "")
+        price = m.get("price") or 0
+        mode  = m.get("optionGroupPricingMode") or ""
+        parts.append({
+            "name":  f"{name} (+{_fmt_money(price)})" if price and mode == "ADJUSTS_PRICE" else name,
+            "depth": depth,
+        })
+        if m.get("modifiers"):
+            parts.extend(_collect_mods(m["modifiers"], depth + 1))
+    return parts
+
+
 def _process_order(raw, server_name="", rc_name="", opened_by_names=None, location_name="", approver_names=None):
     """Transform raw Toast API order dict into clean template context."""
     if opened_by_names is None:
@@ -1572,18 +1609,12 @@ def _process_order(raw, server_name="", rc_name="", opened_by_names=None, locati
             if sel.get("optionGroup") is not None:
                 continue
 
-
-            mods = ", ".join(
-                m.get("displayName", "")
-                for m in sel.get("modifiers", [])
-                if m.get("displayName")
-                and m.get("optionGroup") is not None
-            )
+            mods = _collect_mods(sel.get("modifiers", []))
             notes = [
                 m.get("displayName", "")
                 for m in sel.get("modifiers", [])
-                if m.get("selectionType") == "SPECIAL_REQUEST"
-                and m.get("displayName")
+                if m.get("displayName")
+                and m.get("optionGroup") is None
             ]
 
             item_disc = sum(
@@ -1593,7 +1624,7 @@ def _process_order(raw, server_name="", rc_name="", opened_by_names=None, locati
 
             qty            = sel.get("quantity") or 1
             qty_display    = int(qty) if qty == int(qty) else qty
-            unit_price     = sel.get("receiptLinePrice") or 0
+            unit_price     = sel.get("preDiscountPrice") or 0
             extended       = unit_price * qty
             voided         = sel.get("voided", False)
 

@@ -4,6 +4,34 @@
 
 {% block head %}
 <style>
+    /* ── Loading state ── */
+    .page-loading {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 60vh;
+        gap: 16px;
+    }
+    .page-spinner {
+        width: 28px;
+        height: 28px;
+        border: 2.5px solid #e4e2de;
+        border-top-color: #1a1a1a;
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+    }
+    .page-loading-label {
+        font-family: 'Barlow Condensed', sans-serif;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+        color: #aaa;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .order-content { display: none; }
+
     .order-page {
         max-width: 1040px;
         margin: 0 auto;
@@ -357,9 +385,15 @@
         padding: 24px;
     }
 
-    .item-name  { font-weight: 700; }
-    .item-mods  { font-size: 12px; color: #888; margin-top: 2px; font-family: 'Barlow', sans-serif; }
-    .item-note  { font-size: 12px; color: #aaa; font-style: italic; margin-top: 2px; }
+    .item-name   { font-weight: 700; }
+    .item-mods   { margin-top: 3px; font-family: 'Barlow', sans-serif; }
+    .item-mod    { font-size: 12px; color: #888; line-height: 1.6; }
+    .item-mod.depth-0 { padding-left: 0; }
+    .item-mod.depth-1 { padding-left: 12px; }
+    .item-mod.depth-2 { padding-left: 24px; }
+    .item-mod.depth-3 { padding-left: 36px; }
+    .mod-indent  { color: #ccc; font-size: 10px; margin-right: 2px; }
+    .item-note   { font-size: 12px; color: #aaa; font-style: italic; margin-top: 2px; }
 
     .voided-row td { color: #ccc; }
     .voided-row .item-name { text-decoration: line-through; }
@@ -420,6 +454,13 @@
 {% endblock %}
 
 {% block content %}
+
+<div class="page-loading" id="page-loading">
+    <div class="page-spinner"></div>
+    <div class="page-loading-label">Loading order...</div>
+</div>
+
+<div class="order-content" id="order-content">
 <div class="order-page">
 
     {# ── Header ── #}
@@ -636,7 +677,13 @@
                         <td class="al">
                             <div class="item-name">{{ item.name }}</div>
                             {% if item.modifiers %}
-                            <div class="item-mods">{{ item.modifiers }}</div>
+                            <div class="item-mods">
+                                {% for mod in item.modifiers %}
+                                <div class="item-mod depth-{{ mod.depth }}">
+                                    {% if mod.depth > 0 %}<span class="mod-indent">↳</span> {% endif %}{{ mod.name }}
+                                </div>
+                                {% endfor %}
+                            </div>
                             {% endif %}
                             {% for note in item.notes %}
                             <div class="item-note">"{{ note }}"</div>
@@ -780,7 +827,8 @@
     </div>{# end check-block #}
     {% endfor %}
 
-</div>
+</div>{# end order-page #}
+</div>{# end order-content #}
 
 <script>
 function toggleCheck(header) {
@@ -788,5 +836,11 @@ function toggleCheck(header) {
     header.classList.toggle('collapsed');
     body.classList.toggle('collapsed');
 }
+
+// Show content once page is fully loaded
+window.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('page-loading').style.display = 'none';
+    document.getElementById('order-content').style.display = 'block';
+});
 </script>
 {% endblock %}

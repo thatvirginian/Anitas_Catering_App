@@ -2,7 +2,26 @@
 
 {% block title %}Catering Schedule{% endblock %}
 
+{% block head %}
+<style>
+    .col-order-link { width: 28px; text-align: center; }
+    .order-link-btn {
+        display: inline-block;
+        font-size: 13px;
+        color: #aaa;
+        text-decoration: none;
+        line-height: 1;
+        transition: color 0.15s;
+    }
+    .order-link-btn:hover { color: #1a1a1a; }
+</style>
+{% endblock %}
+
 {% block content %}
+
+<div id="app-config"
+     data-can-admin="{{ 'true' if 'admin' in user.roles or 'catering' in user.roles else 'false' }}"
+     style="display:none"></div>
 
 {# ── Filter Bar ─────────────────────────────────────────────────────────────── #}
 <div class="filter-bar">
@@ -111,6 +130,7 @@
                         <th class="col-map"></th>
                         <th class="col-attach"></th>
                         <th class="col-actions"></th>
+                        <th class="col-order-link"></th>
                     </tr>
                 </thead>
                 <tbody>
@@ -191,6 +211,10 @@
                         </button>
                         <span class="save-status"></span>
                     </td>
+                    <td class="col-order-link">
+                        <a href="/order/{{ order.order_guid }}" target="_blank" class="order-link-btn" title="View order detail">↗</a>
+                    </td>
+
                 </tr>
                 {% endfor %}
                 </tbody>
@@ -450,7 +474,7 @@ document.addEventListener('DOMContentLoaded', updateDOLabel);
 
 <script>
 let currentAttachOrderGuid = null;
-const CAN_ADMIN_ATTACH = {{ ('true' if 'admin' in user.roles or 'catering' in user.roles else 'false') }};
+const CAN_ADMIN_ATTACH = document.getElementById('app-config').dataset.canAdmin === 'true';
 
 async function openAttachments(orderGuid) {
     currentAttachOrderGuid = orderGuid;
