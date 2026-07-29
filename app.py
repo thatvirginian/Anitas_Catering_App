@@ -10,7 +10,7 @@ import math
 import os
 import pytz
 import requests as http_requests
-
+import time
 from src.database_setup import get_engine
 
 app = Flask(__name__)
@@ -27,6 +27,23 @@ SP_CLIENT_SECRET = os.getenv("SHAREPOINT_CLIENT_SECRET")
 SP_SITE_URL      = os.getenv("SHAREPOINT_SITE_URL")   # e.g. https://anitascorp.sharepoint.com/sites/catering
 SP_DRIVE_ID      = os.getenv("SHAREPOINT_DRIVE_ID")   # document library drive ID
 SP_MAX_BYTES     = 25 * 1024 * 1024                    # 25 MB upload cap
+
+# ── Startup cache ─────────────────────────────────────────────────────────────
+_cache = {}
+
+def _load_cache():
+    with engine.connect() as conn:
+        _cache["locations"] = [dict(r) for r in conn.execute(text("""
+            SELECT store_guid::text AS guid, location_name AS name
+            FROM locations ORDER BY location_name
+        """)).mappings().all()]
+
+        _cache["dining_options"] = [dict(r) for r in conn.execute(text("""
+            SELECT guid::text, name FROM dining_options
+            WHERE name LIKE '%Catering%' ORDER BY name
+        """)).mappings().all()]
+
+_load_cache()
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -206,25 +223,10 @@ def _cache_coordinates(order_guid, lat, lon):
         logger.error(f"[GEOCODE] Failed to cache coordinates for {order_guid}: {e}")
 
 def _get_dining_options():
-    """Load all dining options for the filter dropdown."""
-    with engine.connect() as conn:
-        rows = conn.execute(text("""
-            SELECT guid::text, name
-            FROM dining_options
-            WHERE name LIKE '%Catering%'
-            ORDER BY name
-        """)).mappings().all()
-    return [dict(r) for r in rows]
+    return _cache["dining_options"]
 
 def _get_locations():
-    """Load all locations for the store filter dropdown."""
-    with engine.connect() as conn:
-        rows = conn.execute(text("""
-            SELECT store_guid::text AS guid, location_name AS name
-            FROM locations
-            ORDER BY location_name
-        """)).mappings().all()
-    return [dict(r) for r in rows]
+    return _cache["locations"]
 
 
 def _get_store_locations_for_user(user):
@@ -350,6 +352,7 @@ def _get_store_orders(start_date, end_date, location_guids=None, dining_option_g
             oh.location_id::text AS location_id,
             l.location_name,
             l.route,
+            l.timezone,
 
             UPPER(oc.customer_first) AS customer_first,
             UPPER(oc.customer_last)  AS customer_last,
@@ -390,8 +393,8 @@ def _get_store_orders(start_date, end_date, location_guids=None, dining_option_g
         WHERE (oh.source = 'Catering'
           OR oh.source = 'Invoice')
           AND oh.voided = FALSE
-          AND oh.estimated_fulfillment_date::date
-              BETWEEN :start_date AND :end_date
+          AND (oh.estimated_fulfillment_date AT TIME ZONE l.timezone)::date
+                BETWEEN :start_date AND :end_date
           {location_filter}
           {dining_filter}
         ORDER BY
@@ -411,6 +414,9 @@ def _get_store_orders(start_date, end_date, location_guids=None, dining_option_g
         order = dict(row)
         efd = order["estimated_fulfillment_date"]
         if efd and hasattr(efd, "strftime"):
+            if efd.tzinfo is not None:
+                tz  = pytz.timezone(order.get("timezone") or "America/New_York")
+                efd = efd.astimezone(tz)
             order["display_date"] = f"{efd.month}/{efd.day}"
             order["display_day"]  = efd.strftime("%a").upper()
         else:
@@ -493,7 +499,7 @@ def _get_orders(start_date, end_date, dining_option_guids=None):
         WHERE (oh.source = 'Catering'
           OR oh.source = 'Invoice')
           AND oh.voided = FALSE
-          AND oh.estimated_fulfillment_date::date
+          AND (oh.estimated_fulfillment_date AT TIME ZONE l.timezone)::date
               BETWEEN :start_date AND :end_date
           {dining_filter}
         ORDER BY
@@ -520,6 +526,9 @@ def _get_orders(start_date, end_date, dining_option_guids=None):
 
         efd = order["estimated_fulfillment_date"]
         if efd and hasattr(efd, "strftime"):
+            if efd.tzinfo is not None:
+                tz  = pytz.timezone(order.get("timezone") or "America/New_York")
+                efd = efd.astimezone(tz)
             order["display_date"] = f"{efd.month}/{efd.day}"
             order["display_day"]  = efd.strftime("%a").upper()
         else:
@@ -741,6 +750,7 @@ def map_view(order_guid):
             oh.order_guid,
             oh.estimated_fulfillment_date,
             l.location_name,
+            l.timezone,
             l.address   AS store_address,
             l.latitude  AS store_lat,
             l.longitude AS store_lon,
@@ -824,6 +834,9 @@ def map_view(order_guid):
         logger.warning(f"[MAP] Missing coordinates for order {order_guid}")
 
     efd = row.get("estimated_fulfillment_date")
+    if efd and efd.tzinfo is not None:
+        tz  = pytz.timezone(row.get("timezone") or "America/New_York")
+        efd = efd.astimezone(tz)
 
     return jsonify({
         "order_guid":     order_guid,
