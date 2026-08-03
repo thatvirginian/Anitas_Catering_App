@@ -356,6 +356,7 @@ def _get_store_orders(start_date, end_date, location_guids=None, dining_option_g
 
             UPPER(oc.customer_first) AS customer_first,
             UPPER(oc.customer_last)  AS customer_last,
+            oc.customer_guid,
             oc.total_amount,
 
             COALESCE(
@@ -373,14 +374,15 @@ def _get_store_orders(start_date, end_date, location_guids=None, dining_option_g
             cd.return_time,
             cd.num_employees,
             cd.driver_assigned,
-            cd.event_company,
+            COALESCE(NULLIF(cd.event_company, ''), ccc.company_name) AS event_company,
+            COALESCE(NULLIF(cd.client_type, ''), ccc.client_type)    AS client_type,
             cd.notes
 
         FROM orders_head oh
         JOIN locations l
             ON oh.location_id::text = l.store_guid::text
         LEFT JOIN LATERAL (
-            SELECT customer_first, customer_last, total_amount
+            SELECT customer_first, customer_last, customer_guid, total_amount
             FROM order_checks
             WHERE order_guid = oh.order_guid
             ORDER BY opened_date NULLS LAST, check_guid
@@ -390,7 +392,8 @@ def _get_store_orders(start_date, end_date, location_guids=None, dining_option_g
             ON cd.order_guid = oh.order_guid
         LEFT JOIN dining_options do_
             ON do_.guid::text = oh.dining_option_guid::text
-        WHERE (oh.source = 'Catering'
+        LEFT JOIN catering_customer_companies ccc
+            ON ccc.customer_guid = oc.customer_guid
           OR oh.source = 'Invoice')
           AND oh.voided = FALSE
           AND (oh.estimated_fulfillment_date AT TIME ZONE l.timezone)::date
@@ -460,6 +463,7 @@ def _get_orders(start_date, end_date, dining_option_guids=None):
             -- Customer name and total from first check
             UPPER(oc.customer_first) AS customer_first,
             UPPER(oc.customer_last)  AS customer_last,
+            oc.customer_guid,
             oc.total_amount,
 
             -- Catering detail fields — derive service_type from dining option if blank
@@ -478,15 +482,15 @@ def _get_orders(start_date, end_date, dining_option_guids=None):
             cd.return_time,
             cd.num_employees,
             cd.driver_assigned,
-            cd.event_company,
-            cd.client_type,
+            COALESCE(NULLIF(cd.event_company, ''), ccc.company_name) AS event_company,
+            COALESCE(NULLIF(cd.client_type, ''), ccc.client_type)    AS client_type,
             cd.notes
 
         FROM orders_head oh
         JOIN locations l
             ON oh.location_id::text = l.store_guid::text
         LEFT JOIN LATERAL (
-            SELECT customer_first, customer_last, total_amount
+            SELECT customer_first, customer_last, customer_guid, total_amount
             FROM order_checks
             WHERE order_guid = oh.order_guid
             ORDER BY opened_date NULLS LAST, check_guid
@@ -496,6 +500,8 @@ def _get_orders(start_date, end_date, dining_option_guids=None):
             ON cd.order_guid = oh.order_guid
         LEFT JOIN dining_options do_
             ON do_.guid::text = oh.dining_option_guid::text
+        LEFT JOIN catering_customer_companies ccc
+            ON ccc.customer_guid = oc.customer_guid
         WHERE (oh.source = 'Catering'
           OR oh.source = 'Invoice')
           AND oh.voided = FALSE
@@ -689,6 +695,46 @@ def save_order(order_guid):
         with engine.begin() as conn:
             params = {"order_guid": order_guid, **sent_fields}
             conn.execute(sql, params)
+
+            # If event_company or client_type was saved, update the customer lookup
+            if ("event_company" in sent_fields and sent_fields["event_company"]) or \
+               ("client_type" in sent_fields and sent_fields["client_type"]):
+
+                customer_row = conn.execute(text("""
+                    SELECT oc.customer_guid
+                    FROM order_checks oc
+                    WHERE oc.order_guid = :order_guid
+                      AND oc.customer_guid IS NOT NULL
+                    ORDER BY oc.opened_date NULLS LAST
+                    LIMIT 1
+                """), {"order_guid": order_guid}).first()
+
+                if customer_row and customer_row[0]:
+                    # Build dynamic update — only set fields that were sent
+                    update_parts = ["last_updated = NOW()"]
+                    upsert_params = {"customer_guid": customer_row[0]}
+
+                    if "event_company" in sent_fields and sent_fields["event_company"]:
+                        update_parts.append("company_name = EXCLUDED.company_name")
+                        upsert_params["company_name"] = sent_fields["event_company"]
+                    else:
+                        upsert_params["company_name"] = None
+
+                    if "client_type" in sent_fields and sent_fields["client_type"]:
+                        update_parts.append("client_type = EXCLUDED.client_type")
+                        upsert_params["client_type"] = sent_fields["client_type"]
+                    else:
+                        upsert_params["client_type"] = None
+
+                    conn.execute(text(f"""
+                        INSERT INTO catering_customer_companies
+                            (customer_guid, company_name, client_type, last_updated)
+                        VALUES
+                            (:customer_guid, :company_name, :client_type, NOW())
+                        ON CONFLICT (customer_guid) DO UPDATE SET
+                            {', '.join(update_parts)}
+                    """), upsert_params)
+
         return jsonify({"status": "ok"})
     except Exception as e:
         logger.error(f"Save failed for {order_guid}: {e}")
@@ -1592,9 +1638,11 @@ def _process_order(raw, server_name="", rc_name="", opened_by_names=None, locati
         disc_total = (
             sum(float(d.get("discountAmount") or 0)
                 for s in chk.get("selections", [])
-                for d in s.get("appliedDiscounts", []))
+                for d in s.get("appliedDiscounts", [])
+                if d.get("processingState") != 'VOID')
             + sum(float(d.get("discountAmount") or 0)
-                  for d in chk.get("appliedDiscounts", []))
+                  for d in chk.get("appliedDiscounts", [])
+                  if d.get("processingState") != 'VOID')
         )
         pre_disc_total = sum(
             sel.get("preDiscountPrice") or 0
@@ -1620,11 +1668,12 @@ def _process_order(raw, server_name="", rc_name="", opened_by_names=None, locati
             item_disc = sum(
                 float(d.get("discountAmount") or 0)
                 for d in sel.get("appliedDiscounts", [])
+                if d.get("processingState") != 'VOID'
             )
 
             qty            = sel.get("quantity") or 1
             qty_display    = int(qty) if qty == int(qty) else qty
-            unit_price     = sel.get("preDiscountPrice") or 0
+            unit_price     = sel.get("receiptLinePrice") or 0
             extended       = unit_price * qty
             voided         = sel.get("voided", False)
 
@@ -1755,10 +1804,12 @@ def _process_order(raw, server_name="", rc_name="", opened_by_names=None, locati
         sum(float(d.get("discountAmount") or 0)
             for c in checks_raw
             for s in c.get("selections", [])
-            for d in s.get("appliedDiscounts", []))
+            for d in s.get("appliedDiscounts", [])
+            if d.get("processingState") != 'VOID')
         + sum(float(d.get("discountAmount") or 0)
               for c in checks_raw
-              for d in c.get("appliedDiscounts", []))
+              for d in c.get("appliedDiscounts", [])
+              if d.get("processingState") != 'VOID')
     )
 
     return {
@@ -1782,6 +1833,7 @@ def _process_order(raw, server_name="", rc_name="", opened_by_names=None, locati
 
 
 @app.route("/order/<order_guid>")
+@role_required("admin", "catering", "gm", "store")
 def order_detail(order_guid):
     # 1. Get location_id from DB
     with engine.connect() as conn:

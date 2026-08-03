@@ -127,9 +127,10 @@
         .col-dur    { width: 6%; }
         .col-total  { width: 7%; text-align: right; }
         .col-emp    { width: 4%; text-align: center; }
-        .col-driver { width: 10%; }
-        .col-cust   { width: 12%; }
-        .col-co     { width: 13%; }
+        .col-driver { width: 9%; }
+        .col-cust   { width: 10%; }
+        .col-co     { width: 11%; }
+        .col-client { width: 8%; }
 
         .empty-cell { color: #bbb; }
 
@@ -243,6 +244,7 @@
             <th class="col-driver">Driver</th>
             <th class="col-cust">Customer</th>
             <th class="col-co">Company</th>
+            <th class="col-client">Client Type</th>
         </tr>
     </thead>
     <tbody>
@@ -267,6 +269,7 @@
         <td class="col-driver">{{ order.driver_assigned or '' }}</td>
         <td class="col-cust">{{ order.customer_first or '' }} {{ order.customer_last or '' }}</td>
         <td class="col-co">{{ order.event_company or '' }}</td>
+        <td class="col-client">{{ order.client_type or '' }}</td>
     </tr>
     {% endfor %}
     </tbody>
