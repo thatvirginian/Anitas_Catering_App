@@ -394,6 +394,7 @@ def _get_store_orders(start_date, end_date, location_guids=None, dining_option_g
             ON do_.guid::text = oh.dining_option_guid::text
         LEFT JOIN catering_customer_companies ccc
             ON ccc.customer_guid = oc.customer_guid
+        WHERE (oh.source = 'Catering'
           OR oh.source = 'Invoice')
           AND oh.voided = FALSE
           AND (oh.estimated_fulfillment_date AT TIME ZONE l.timezone)::date
