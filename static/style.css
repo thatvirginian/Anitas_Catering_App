@@ -841,3 +841,12 @@ body {
     display: flex; gap: 8px; align-items: center;
 }
 .attach-empty { color: var(--ink-light); font-size: 12px; font-style: italic; padding: 8px 0; }
+
+/* Green dot — order has attachments */
+.attach-btn.has-files::before {
+    content: '';
+    position: absolute; top: 0; left: 0;
+    width: 8px; height: 8px;
+    background: #2a7a3a; border-radius: 50%;
+    border: 1.5px solid #fff;
+}

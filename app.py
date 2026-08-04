@@ -616,7 +616,8 @@ def index():
         for data in locs.values()
         for o in data["orders"]
     ]
-    unread = _get_unread_notifications(all_guids, g.user["username"])
+    unread          = _get_unread_notifications(all_guids, g.user["username"])
+    has_attachments = _get_orders_with_attachments(all_guids)
 
     return render_template(
         "orders.html",
@@ -630,6 +631,7 @@ def index():
         client_types         = client_types,
         drivers_by_location  = _get_drivers_by_location(),
         unread_notifications = unread,
+        has_attachments      = has_attachments,
     )
 
 
@@ -953,28 +955,10 @@ def store():
         for o in data["orders"]
     ))
 
-    # Collect all order guids for notification check
-    all_guids = [o["order_guid"] for data in grouped.values() for o in data["orders"]]
-    unread    = _get_unread_notifications(all_guids, g.user["username"])
-
-    t0 = time.time()
-    locations = _get_store_locations_for_user(g.user)
-    t1 = time.time()
-    dining_options = _get_dining_options()
-    t2 = time.time()
-    grouped = _get_store_orders(
-        start_date, end_date,
-        selected_locations or None,
-        selected_dining_guids or None,
-    )
-    t3 = time.time()
-    drivers = _get_drivers_by_location()
-    t4 = time.time()
-
-    print(f"[STORE] locations={t1 - t0:.2f}s dining={t2 - t1:.2f}s orders={t3 - t2:.2f}s drivers={t4 - t3:.2f}s")
-
-
-
+    # Collect all order guids for notification and attachment checks
+    all_guids       = [o["order_guid"] for data in grouped.values() for o in data["orders"]]
+    unread          = _get_unread_notifications(all_guids, g.user["username"])
+    has_attachments = _get_orders_with_attachments(all_guids)
 
     return render_template(
         "store.html",
@@ -988,6 +972,7 @@ def store():
         dining_option_guids   = selected_dining_guids,
         drivers_by_location   = _get_drivers_by_location(),
         unread_notifications  = unread,
+        has_attachments       = has_attachments,
     )
 
 
@@ -1317,6 +1302,19 @@ def _get_unread_notifications(order_guids, user_email):
             WHERE order_guid = ANY(:guids)
               AND NOT (:email = ANY(seen_by))
         """), {"guids": list(order_guids), "email": user_email}).mappings().all()
+    return {r["order_guid"] for r in rows}
+
+
+def _get_orders_with_attachments(order_guids):
+    """Returns set of order_guids that have at least one attachment."""
+    if not order_guids:
+        return set()
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT DISTINCT order_guid
+            FROM order_attachments
+            WHERE order_guid = ANY(:guids)
+        """), {"guids": list(order_guids)}).mappings().all()
     return {r["order_guid"] for r in rows}
 
 

@@ -165,7 +165,7 @@
                 <td class="col-customer">{{ order.customer_first or '' }} {{ order.customer_last or '' }}</td>
                 <td class="col-company">{{ order.event_company or '' }}</td>
                 <td class="col-attach">
-                    <button class="attach-btn {% if order.order_guid in unread_notifications %}has-notification{% endif %}"
+                    <button class="attach-btn {% if order.order_guid in has_attachments %}has-files{% endif %} {% if order.order_guid in unread_notifications %}has-notification{% endif %}"
                             onclick="openAttachments('{{ order.order_guid }}')"
                             title="Attachments">📎</button>
                 </td>
@@ -460,6 +460,10 @@ async function uploadAttachment() {
             input.value = '';
             btn.textContent = 'UPLOAD';
             btn.disabled    = false;
+            document.querySelectorAll('.attach-btn').forEach(b => {
+                if (b.closest('tr') && b.closest('tr').dataset.guid === currentAttachOrderGuid)
+                    b.classList.add('has-files');
+            });
             await loadAttachments(currentAttachOrderGuid);
         } else {
             alert(data.message || 'Upload failed.');
