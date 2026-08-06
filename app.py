@@ -1647,6 +1647,7 @@ def _process_order(raw, server_name="", rc_name="", opened_by_names=None, locati
             sel.get("preDiscountPrice") or 0
             for sel in chk.get("selections", [])
             if not sel.get("deleted")
+            and not sel.get("voided")
             and sel.get("optionGroup") is None
         )
 
