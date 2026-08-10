@@ -2156,6 +2156,7 @@ def forecast_drill_down():
     with engine.connect() as conn:
         full_df = pd.read_sql(detail_query, conn,
                               params={"loc_id": str(loc_id), "sel_date": sel_date})
+        full_df["mods"] = full_df["mods"].fillna("")
 
     bb_badges, taco_badges, orders = [], [], {}
 
