@@ -13,6 +13,10 @@ import requests as http_requests
 import time
 from src.database_setup import get_engine
 
+
+import pandas as pd
+from src.excel_helper import get_excel_download_buffer
+
 app = Flask(__name__)
 logger = logging.getLogger(__name__)
 engine = get_engine()
@@ -1898,6 +1902,447 @@ def order_detail(order_guid):
     # 7. Process and render
     order = _process_order(order_raw, server_name, rc_name, opened_by_names, location_name, approver_names)
     return render_template("order_detail.html", order=order)
+
+
+
+################################################################
+# ─────────────────────────────────────────────────────────────────────────────
+# FORECAST — add these imports to the top of app.py if not already present:
+#   import pandas as pd
+#   from src.excel_helper import get_excel_download_buffer
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ─────────────────────────────────────────────
+# FORECAST: ROUTE EXPORT RULES
+# Controls which weekdays allow Excel export,
+# and how many days each export window covers.
+# ─────────────────────────────────────────────
+
+ROUTE_LOOK_AHEAD_MAP = {
+    "North": {
+        0: [0, 1],       # Mon export covers: Mon, Tue
+        1: [],           # Tue restricted
+        2: [2, 3],       # Wed export covers: Wed, Thu
+        3: [],           # Thu restricted
+        4: [4, 5, 6],   # Fri export covers: Fri, Sat, Sun
+        5: [],           # Sat restricted
+        6: [],           # Sun restricted
+    },
+    "South": {
+        0: [],           # Mon restricted
+        1: [1, 2],       # Tue export covers: Tue, Wed
+        2: [],           # Wed restricted
+        3: [3, 4],       # Thu export covers: Thu, Fri
+        4: [],           # Fri restricted
+        5: [5, 6, 0],   # Sat export covers: Sat, Sun, Next Mon
+        6: [],           # Sun restricted
+    },
+    "Default": {
+        0: [0, 1, 2], 1: [1, 2], 2: [2, 3], 3: [3, 4],
+        4: [4, 5],    5: [5, 6], 6: [6, 0]
+    }
+}
+
+
+# ─────────────────────────────────────────────
+# FORECAST: TEMPLATE FILTER
+# ─────────────────────────────────────────────
+
+@app.template_filter('padding')
+def padding_filter(s, width=3):
+    return str(s).rjust(width)
+
+
+# ─────────────────────────────────────────────
+# FORECAST: HELPERS
+# ─────────────────────────────────────────────
+
+def _forecast_get_location_maps():
+    """Lightweight (loc_name → store_guid, loc_name → route) from locations."""
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT location_name, store_guid, route FROM locations ORDER BY location_name"
+        )).fetchall()
+    loc_map   = {r.location_name: r.store_guid for r in rows}
+    route_map = {r.location_name: r.route      for r in rows}
+    return loc_map, route_map
+
+
+def _forecast_build_grid(days=7):
+    """
+    Returns (all_dates, matrix, loc_map, route_map, daily_totals) for the
+    rolling N-day window starting tomorrow.
+
+    matrix is a list of:
+        {"location": str, "cells": [{"date", "date_str", "am", "pm",
+                                      "rev", "is_gold", "is_empty"}, ...]}
+    daily_totals is a list of floats (one per date, summed across all locations).
+    """
+    start_date = datetime.now().date() + timedelta(days=1)
+    end_date   = start_date + timedelta(days=days - 1)
+    all_dates  = [start_date + timedelta(days=n) for n in range(days)]
+
+    query = text("""
+        SELECT
+            l.location_name                                                       AS "Location",
+            l.store_guid                                                          AS "location_id",
+            l.route                                                               AS "Route",
+            (h.estimated_fulfillment_date AT TIME ZONE l.timezone)::date          AS "Date",
+            CASE
+                WHEN extract(hour FROM (h.estimated_fulfillment_date AT TIME ZONE l.timezone)) < 13
+                THEN 'AM' ELSE 'PM'
+            END                                                                   AS "DayPart",
+            count(DISTINCT h.order_guid)                                          AS "OrderCount",
+            sum(sum(c.total_amount)) OVER (
+                PARTITION BY
+                    l.location_name,
+                    (h.estimated_fulfillment_date AT TIME ZONE l.timezone)::date
+            )                                                                     AS "DailyTotalRevenue"
+        FROM orders_head h
+        LEFT JOIN locations l
+               ON h.location_id::uuid = l.store_guid
+        JOIN order_checks c
+               ON h.order_guid = c.order_guid
+        WHERE (h.estimated_fulfillment_date AT TIME ZONE l.timezone)::date
+              BETWEEN :start AND :end
+          AND h.voided  = FALSE
+          AND c.voided  = FALSE
+        GROUP BY 1, 2, 3, 4, 5
+    """)
+
+    with engine.connect() as conn:
+        df = pd.read_sql(query, conn, params={"start": start_date, "end": end_date})
+
+    if df.empty:
+        return all_dates, [], {}, {}, [0.0] * days
+
+    rev_map   = df.groupby(["Location", "Date"])["DailyTotalRevenue"].first().to_dict()
+    route_map = dict(zip(df["Location"], df["Route"]))
+    loc_map   = dict(zip(df["Location"], df["location_id"]))
+
+    pivot = df.pivot_table(
+        index="Location",
+        columns=["Date", "DayPart"],
+        values="OrderCount",
+        aggfunc="sum"
+    ).fillna(0).astype(int)
+
+    day_parts = pivot.columns.get_level_values("DayPart")
+    am = pivot.xs("AM", axis=1, level="DayPart") if "AM" in day_parts \
+        else pd.DataFrame(0, index=pivot.index, columns=all_dates)
+    pm = pivot.xs("PM", axis=1, level="DayPart") if "PM" in day_parts \
+        else pd.DataFrame(0, index=pivot.index, columns=all_dates)
+
+    am = am.reindex(columns=all_dates, fill_value=0)
+    pm = pm.reindex(columns=all_dates, fill_value=0)
+
+    matrix = []
+    for loc in pivot.index:
+        cells = []
+        for dt in all_dates:
+            a = int(am.at[loc, dt])
+            p = int(pm.at[loc, dt])
+            rev = rev_map.get((loc, dt), 0.0)
+            cells.append({
+                "date":     dt,
+                "date_str": dt.strftime("%Y-%m-%d"),
+                "am":       a,
+                "pm":       p,
+                "rev":      rev,
+                "is_gold":  rev >= 1000,
+                "is_empty": (a == 0 and p == 0),
+            })
+        matrix.append({"location": loc, "cells": cells})
+
+    daily_totals = [
+        sum(rev_map.get((loc, dt), 0.0) for loc in pivot.index)
+        for dt in all_dates
+    ]
+
+    return all_dates, matrix, loc_map, route_map, daily_totals
+
+
+# ─────────────────────────────────────────────
+# FORECAST: ROUTES
+# ─────────────────────────────────────────────
+
+@app.route("/forecast")
+@role_required("admin", "catering", "gm")
+def forecast():
+    days = min(max(int(request.args.get("days", 7)), 2), 14)
+    all_dates, matrix, _, route_map, daily_totals = _forecast_build_grid(days=days)
+
+    seen_routes  = []
+    route_groups = {}
+    for row in matrix:
+        route = route_map.get(row["location"], "Other")
+        if route not in route_groups:
+            route_groups[route] = []
+            seen_routes.append(route)
+        route_groups[route].append(row)
+
+    return render_template(
+        "forecast.html",
+        all_dates=all_dates,
+        route_groups=route_groups,
+        seen_routes=seen_routes,
+        daily_totals=daily_totals,
+        days=days,
+    )
+
+
+@app.route("/forecast/drill-down")
+@role_required("admin", "catering", "gm")
+def forecast_drill_down():
+    loc_name = request.args.get("location", "")
+    date_str = request.args.get("date", "")
+
+    loc_map, route_map = _forecast_get_location_maps()
+    loc_id     = loc_map.get(loc_name)
+    sel_route  = route_map.get(loc_name, "Default")
+    sel_date   = datetime.strptime(date_str, "%Y-%m-%d").date()
+
+    route_rules     = ROUTE_LOOK_AHEAD_MAP.get(sel_route, ROUTE_LOOK_AHEAD_MAP["Default"])
+    day_offsets     = route_rules.get(sel_date.weekday(), [])
+    export_disabled = (len(day_offsets) == 0)
+
+    detail_query = text("""
+        WITH OrderTotals AS (
+            SELECT
+                h.order_guid,
+                SUM(c.total_amount) AS true_order_total
+            FROM orders_head h
+            JOIN order_checks c ON h.order_guid = c.order_guid
+            WHERE h.location_id::uuid = :loc_id
+              AND (h.estimated_fulfillment_date AT TIME ZONE
+                   (SELECT timezone FROM locations WHERE store_guid = :loc_id))::date = :sel_date
+              AND h.voided = FALSE
+              AND c.voided = FALSE
+            GROUP BY h.order_guid
+        )
+        SELECT
+            h.order_guid,
+            h.order_number,
+            CONCAT_WS(' ', c.customer_first, c.customer_last)  AS customer_name,
+            (h.estimated_fulfillment_date AT TIME ZONE
+             (SELECT timezone FROM locations WHERE store_guid = :loc_id)) AS local_time,
+            oi.item_name,
+            oi.quantity,
+            STRING_AGG(DISTINCT im.mod_name, ', ')              AS mods,
+            ot.true_order_total                                 AS order_total,
+            od.name                                             AS dining_option
+        FROM orders_head h
+        JOIN order_checks c
+               ON h.order_guid = c.order_guid
+        JOIN order_items oi
+               ON c.check_guid = oi.check_guid
+        LEFT JOIN dining_options od
+               ON h.dining_option_guid::uuid = od.guid
+        LEFT JOIN item_modifiers im
+               ON oi.selection_guid = im.selection_guid
+        JOIN OrderTotals ot
+               ON h.order_guid = ot.order_guid
+        WHERE h.location_id::uuid = :loc_id
+          AND (h.estimated_fulfillment_date AT TIME ZONE
+               (SELECT timezone FROM locations WHERE store_guid = :loc_id))::date = :sel_date
+          AND h.voided  = FALSE
+          AND c.voided  = FALSE
+          AND oi.voided = FALSE
+        GROUP BY 1, 2, 3, 4, 5, 6, 8, 9
+        ORDER BY local_time ASC
+    """)
+
+    with engine.connect() as conn:
+        full_df = pd.read_sql(detail_query, conn,
+                              params={"loc_id": str(loc_id), "sel_date": sel_date})
+
+    bb_badges, taco_badges, orders = [], [], {}
+
+    if not full_df.empty:
+        bb_mask = full_df["item_name"].str.contains("BB", case=False, na=False)
+        if bb_mask.any():
+            bb_badges = (
+                full_df[bb_mask]
+                .groupby("item_name")["quantity"].sum()
+                .reset_index()
+                .to_dict(orient="records")
+            )
+
+        taco_mask = full_df["item_name"].str.contains("Taco Bar", case=False, na=False)
+        if taco_mask.any():
+            taco_badges = (
+                full_df[taco_mask]
+                .groupby("item_name")["quantity"].sum()
+                .reset_index()
+                .to_dict(orient="records")
+            )
+
+        for order_id, group in full_df.groupby("order_guid", sort=False):
+            orders[order_id] = {
+                "number":      group["order_number"].iloc[0],
+                "customer":    (group["customer_name"].iloc[0] or "").strip() or "NO NAME",
+                "time":        group["local_time"].iloc[0].strftime("%I:%M %p"),
+                "total":       group["order_total"].iloc[0],
+                "is_high":     group["order_total"].iloc[0] >= 2000,
+                "is_delivery": group["item_name"].str.contains("delivery", case=False, na=False).any(),
+                "lines": group[["quantity", "item_name", "mods"]].to_dict(orient="records"),
+            }
+
+    return render_template(
+        "partials/drill_details.html",
+        location=loc_name,
+        date=date_str,
+        route=sel_route,
+        bb_badges=bb_badges,
+        taco_badges=taco_badges,
+        orders=orders,
+        export_disabled=export_disabled,
+        day_name=sel_date.strftime("%A"),
+    )
+
+
+@app.route("/forecast/export")
+@role_required("admin", "catering", "gm")
+def forecast_export():
+    loc_name = request.args.get("location", "")
+    date_str = request.args.get("date", "")
+
+    loc_map, route_map = _forecast_get_location_maps()
+    loc_id        = loc_map.get(loc_name)
+    sel_route     = route_map.get(loc_name, "Default")
+    clicked_date  = datetime.strptime(date_str, "%Y-%m-%d").date()
+    export_weekday = clicked_date.weekday()
+
+    route_rules = ROUTE_LOOK_AHEAD_MAP.get(sel_route, ROUTE_LOOK_AHEAD_MAP["Default"])
+    day_offsets = route_rules.get(export_weekday, [])
+
+    if not day_offsets:
+        return Response(
+            f"Downloads are restricted for {loc_name} ({sel_route} Route) on {clicked_date.strftime('%A')}s.",
+            status=403,
+            mimetype="text/plain",
+        )
+
+    target_dates = []
+    for offset in day_offsets:
+        days_to_add = offset - export_weekday
+        if days_to_add < 0:
+            days_to_add += 7
+        target_dates.append(clicked_date + timedelta(days=days_to_add))
+
+    target_date_strs = tuple(d.strftime("%Y-%m-%d") for d in target_dates)
+    params = {"loc_id": str(loc_id), "target_dates": target_date_strs}
+
+    combined_query = text("""
+        WITH OrderTotals AS (
+            SELECT
+                h.order_guid,
+                SUM(c.total_amount) AS true_order_total
+            FROM orders_head h
+            JOIN order_checks c ON h.order_guid = c.order_guid
+            WHERE h.location_id::uuid = :loc_id
+              AND (h.estimated_fulfillment_date AT TIME ZONE
+                   (SELECT timezone FROM locations WHERE store_guid = :loc_id))::date
+                   IN :target_dates
+              AND h.voided = FALSE
+              AND c.voided = FALSE
+            GROUP BY h.order_guid
+        )
+        SELECT
+            h.order_guid,
+            h.order_number,
+            CONCAT_WS(' ', c.customer_first, c.customer_last)  AS customer_name,
+            (h.estimated_fulfillment_date AT TIME ZONE
+             (SELECT timezone FROM locations WHERE store_guid = :loc_id)) AS local_time,
+            ot.true_order_total                                 AS order_total,
+            od.name                                             AS dining_option,
+            cpc.supply_id,
+            cpc.supply_name,
+            cpc.supply_type,
+            oi.quantity                                         AS item_qty,
+            cpc.quantity                                        AS supply_qty,
+            (oi.quantity * cpc.quantity)                        AS units_needed
+        FROM orders_head h
+        JOIN order_checks c
+               ON h.order_guid = c.order_guid
+        JOIN order_items oi
+               ON c.check_guid = oi.check_guid
+        JOIN catering_pack_components cpc
+               ON oi.item_guid::uuid = cpc.item_guid
+        LEFT JOIN dining_options od
+               ON h.dining_option_guid::uuid = od.guid
+        JOIN OrderTotals ot
+               ON h.order_guid = ot.order_guid
+        WHERE h.location_id::uuid = :loc_id
+          AND (h.estimated_fulfillment_date AT TIME ZONE
+               (SELECT timezone FROM locations WHERE store_guid = :loc_id))::date
+               IN :target_dates
+          AND h.voided  = FALSE
+          AND c.voided  = FALSE
+          AND oi.voided = FALSE
+        ORDER BY local_time ASC, h.order_number
+    """)
+
+    with engine.connect() as conn:
+        full_df = pd.read_sql(combined_query, conn, params=params)
+
+    if not full_df.empty:
+        store_prep_df = (
+            full_df.groupby(["supply_id", "supply_name", "supply_type"], as_index=False)
+            ["units_needed"].sum()
+            .rename(columns={
+                "supply_name": "Supply Item",
+                "supply_type": "Type",
+                "units_needed": "Total Qty",
+            })
+            .sort_values(["Type", "Supply Item"])
+        )
+        supply_df = full_df[[
+            "order_guid", "order_number", "customer_name", "local_time",
+            "order_total", "dining_option", "supply_id", "supply_name",
+            "supply_type", "units_needed",
+        ]].copy()
+    else:
+        store_prep_df = pd.DataFrame(columns=["supply_id", "Supply Item", "Type", "Total Qty"])
+        supply_df = pd.DataFrame(columns=[
+            "order_guid", "order_number", "customer_name", "local_time",
+            "order_total", "dining_option", "supply_id", "supply_name",
+            "supply_type", "units_needed",
+        ])
+
+    range_label = (
+        f"{target_dates[0].strftime('%m.%d')}-{target_dates[-1].strftime('%m.%d')}"
+        if len(target_dates) > 1
+        else target_dates[0].strftime("%m.%d")
+    )
+
+    excel_bin = get_excel_download_buffer(
+        store_prep_df,
+        supply_df,
+        sheet_name=f"{loc_name[:5]}_{range_label}",
+        location_name=loc_name,
+        route=sel_route,
+        report_date=clicked_date,
+    )
+
+    filename = f"PREP_{loc_name}_{date_str}_BATCHED.xlsx"
+    return Response(
+        excel_bin,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+
+
+
+
+
+
+
+
+
 
 
 

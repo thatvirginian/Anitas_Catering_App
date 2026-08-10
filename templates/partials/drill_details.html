@@ -1,0 +1,170 @@
+{#
+  Partial template — rendered by /forecast/drill-down and injected
+  into #drill-content via fetch(). No extends/block needed.
+  Inherits CSS variables and fonts from the parent page.
+#}
+
+{# ── Export button ── #}
+<div class="dd-export-row">
+  {% if export_disabled %}
+  <span class="dd-export-note">
+    Export not available for {{ route }} Route on {{ day_name }}s.
+  </span>
+  {% else %}
+  <a class="filter-btn"
+     href="{{ url_for('forecast_export', location=location, date=date) }}">
+    ⬇ DOWNLOAD PREP SHEET
+  </a>
+  {% endif %}
+</div>
+
+{# ── BB / Taco Bar badges ── #}
+{% if bb_badges or taco_badges %}
+<div class="dd-badges">
+  {% for b in bb_badges %}
+  <span class="dd-badge dd-badge--bb">{{ b.item_name }} &times;{{ b.quantity }}</span>
+  {% endfor %}
+  {% for b in taco_badges %}
+  <span class="dd-badge dd-badge--taco">{{ b.item_name }} &times;{{ b.quantity }}</span>
+  {% endfor %}
+</div>
+{% endif %}
+
+{# ── Order count ── #}
+<div class="dd-summary">
+  {{ orders | length }} ORDER{% if orders | length != 1 %}S{% endif %}
+</div>
+
+{# ── Order cards ── #}
+{% if orders %}
+  {% for guid, o in orders.items() %}
+  <div class="dd-order {% if o.is_high %}dd-order--high{% endif %}
+                       {% if o.is_delivery %}dd-order--delivery{% endif %}">
+
+    <div class="dd-order-meta">
+      <a class="dd-order-num" href="{{ url_for('order_detail', order_guid=guid) }}" target="_blank">#{{ o.number }}</a>
+      <span class="dd-order-customer">{{ o.customer }}</span>
+      <span class="dd-order-time">{{ o.time }}</span>
+      <span class="dd-order-total">${{ '{:,.2f}'.format(o.total) }}</span>
+      {% if o.is_delivery %}<span class="dd-tag dd-tag--del">DEL</span>{% endif %}
+      {% if o.is_high %}<span class="dd-tag dd-tag--high">HIGH $</span>{% endif %}
+    </div>
+
+    <ul class="dd-lines">
+      {% for item in o.lines %}
+      <li class="dd-line">
+        <span class="dd-line-qty">{{ item.quantity | string | padding(2) }}&times;</span>
+        <span class="dd-line-name">{{ item.item_name }}</span>
+        {% if item.mods %}
+        <span class="dd-line-mods">{{ item.mods }}</span>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="empty-state" style="padding: 40px 0; font-size: 13px;">
+    NO ORDERS FOR THIS DATE
+  </div>
+{% endif %}
+
+<style>
+/* ── Export row ── */
+.dd-export-row  { padding-bottom: 14px; border-bottom: 1px solid var(--rule); margin-bottom: 14px; }
+.dd-export-note { font-family: var(--font-mono); font-size: 11px; color: var(--ink-light); font-style: italic; }
+
+/* ── Badges ── */
+.dd-badges      { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.dd-badge       {
+  font-family: var(--font-display);
+  font-size: 11px; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 3px 10px;
+  border: 1.5px solid;
+}
+.dd-badge--bb   { border-color: var(--north); color: var(--north); background: #eef3f9; }
+.dd-badge--taco { border-color: #7a4a00; color: #7a4a00; background: #fdf6ee; }
+
+/* ── Summary line ── */
+.dd-summary {
+  font-family: var(--font-display);
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.14em; color: var(--ink-light);
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+/* ── Order cards ── */
+.dd-order {
+  background: var(--bg-white);
+  border: 1px solid var(--rule);
+  margin-bottom: 8px;
+}
+.dd-order--high     { border-color: var(--accent); }
+.dd-order--delivery { border-left: 3px solid var(--north); }
+
+.dd-order-meta {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 6px 10px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--rule);
+}
+
+.dd-order-num {
+  font-family: var(--font-display);
+  font-size: 13px; font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  text-decoration: none;
+}
+.dd-order-num:hover { color: var(--accent); text-decoration: underline; }
+
+.dd-order-customer {
+  font-family: var(--font-body);
+  font-size: 12px; font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  flex: 1;
+  color: var(--ink);
+}
+
+.dd-order-time {
+  font-family: var(--font-mono);
+  font-size: 11px; color: var(--ink-mid);
+}
+
+.dd-order-total {
+  font-family: var(--font-mono);
+  font-size: 12px; font-weight: 500;
+  color: var(--ink);
+}
+
+.dd-tag {
+  font-family: var(--font-display);
+  font-size: 9px; font-weight: 700;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 2px 6px;
+  border: 1px solid;
+}
+.dd-tag--del  { border-color: var(--north); color: var(--north); background: #eef3f9; }
+.dd-tag--high { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+
+/* ── Line items ── */
+.dd-lines {
+  list-style: none;
+  padding: 4px 10px 6px;
+}
+.dd-line {
+  display: flex; align-items: baseline; gap: 6px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: 11px;
+}
+.dd-line:last-child { border-bottom: none; }
+
+.dd-line-qty  { font-family: var(--font-mono); color: var(--ink-light); flex-shrink: 0; min-width: 22px; }
+.dd-line-name { font-family: var(--font-body); color: var(--ink); flex: 1; }
+.dd-line-mods { font-family: var(--font-mono); font-size: 10px; color: var(--ink-light); font-style: italic; }
+</style>

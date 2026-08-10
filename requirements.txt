@@ -6,3 +6,8 @@ python-dotenv>=1.0
 gunicorn
 requests
 pytz
+functools
+base64
+json
+pandas
+openpyxl

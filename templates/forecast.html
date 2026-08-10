@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+{% block title %}Forecast{% endblock %}
+
+{% block content %}
+<div class="forecast-page">
+
+  {# ── Day-range toggle ── #}
+  <div class="filter-bar">
+    <div class="filter-group">
+      <span class="filter-label">Window</span>
+      <div class="route-toggle">
+        {% for n in [2, 3, 7, 14] %}
+        <a href="{{ url_for('forecast', days=n) }}"
+           class="toggle-btn {% if days == n %}active{% endif %}">{{ n }}D</a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  {# ── Grid ── #}
+  <div class="forecast-wrap">
+    <div class="table-wrapper">
+      <table class="forecast-table">
+
+        {# Date header #}
+        <thead>
+          <tr>
+            <th class="fc-loc-header">LOCATION</th>
+            {% for dt in all_dates %}
+            <th class="fc-date-header">
+              <span class="fc-dow">{{ dt.strftime('%a').upper() }}</span>
+              <span class="fc-md">{{ dt.strftime('%m/%d') }}</span>
+            </th>
+            {% endfor %}
+          </tr>
+        </thead>
+
+        <tbody>
+          {% for route in seen_routes %}
+
+          {# Route separator #}
+          <tr class="fc-route-row">
+            <td colspan="{{ all_dates|length + 1 }}">
+              <div class="route-header">
+                <span class="route-badge">{{ route }}</span>
+              </div>
+            </td>
+          </tr>
+
+          {# Location rows #}
+          {% for row in route_groups[route] %}
+          <tr class="fc-loc-row">
+            <td class="fc-loc-name">{{ row.location }}</td>
+            {% for cell in row.cells %}
+            <td class="fc-cell {% if cell.is_empty %}fc-cell--empty{% endif %}
+                               {% if cell.is_gold %}fc-cell--gold{% endif %}"
+                {% if not cell.is_empty %}
+                data-location="{{ row.location }}"
+                data-date="{{ cell.date_str }}"
+                onclick="loadDrillDown(this)"
+                {% endif %}>
+              {% if not cell.is_empty %}
+              <span class="fc-ampm">
+                <span class="fc-am">{{ cell.am }}am</span>
+                <span class="fc-pm">{{ cell.pm }}pm</span>
+              </span>
+              <span class="fc-rev">${{ '{:,.0f}'.format(cell.rev) }}</span>
+              {% endif %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+
+          {% endfor %}
+
+          {# Daily totals row #}
+          <tr class="fc-totals-row">
+            <td class="fc-totals-label">DAILY TOTAL</td>
+            {% for total in daily_totals %}
+            <td class="fc-totals-cell {% if total >= 1000 %}fc-cell--gold{% endif %}">
+              {% if total > 0 %}<span class="fc-rev">${{ '{:,.0f}'.format(total) }}</span>{% endif %}
+            </td>
+            {% endfor %}
+          </tr>
+
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+{# ── Drill-down panel ── #}
+<div id="drill-overlay" class="map-overlay" style="display:none;" onclick="closeDrillDown()"></div>
+<div id="drill-panel" class="drill-panel" style="display:none;">
+  <div class="drill-panel-header">
+    <div class="drill-panel-title" id="drill-title"></div>
+    <button class="map-close-btn" onclick="closeDrillDown()">✕</button>
+  </div>
+  <div id="drill-content" class="drill-panel-body">
+    <div class="empty-state">Loading…</div>
+  </div>
+</div>
+
+
+<style>
+/* ── Wrap ── */
+.forecast-wrap { padding: 0 16px 40px; }
+
+/* ── Grid table ── */
+.forecast-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-body);
+  font-size: 12px;
+}
+
+/* All cells get a consistent rule border */
+.forecast-table th,
+.forecast-table td { border: 1px solid var(--rule); }
+
+/* Header row */
+.fc-loc-header,
+.fc-date-header {
+  font-family: var(--font-display);
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink-mid);
+  background: var(--bg);
+  padding: 6px 8px 5px;
+  white-space: nowrap;
+  border-bottom: 2px solid var(--ink);
+}
+.fc-date-header { text-align: center; min-width: 72px; }
+.fc-loc-header  { text-align: left;   min-width: 130px; }
+
+.fc-dow { display: block; font-weight: 700; }
+.fc-md  { display: block; color: var(--ink-light); font-size: 9px; }
+
+/* ── Route row ── */
+.fc-route-row td { border-left: none; border-right: none; padding: 0; }
+.fc-route-row .route-header { padding: 6px 0 2px; background: none; }
+
+/* ── Location name cell ── */
+.fc-loc-name {
+  font-family: var(--font-display);
+  font-size: 12px; font-weight: 700;
+  letter-spacing: 0.04em; text-transform: uppercase;
+  padding: 5px 8px;
+  background: var(--bg);
+  white-space: nowrap;
+}
+
+/* ── Data cells ── */
+.fc-cell {
+  text-align: center;
+  padding: 4px 6px;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background 0.1s;
+}
+.fc-cell:hover        { background: #f0ede8; }
+.fc-cell--empty       { cursor: default; background: var(--bg); }
+.fc-cell--empty:hover { background: var(--bg); }
+.fc-cell--gold        { background: #fef9e7; }
+.fc-cell--gold:hover  { background: #fdebd0; }
+.fc-cell.fc-selected  { outline: 2px solid var(--ink); outline-offset: -2px; }
+
+.fc-ampm { display: block; }
+.fc-am, .fc-pm {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-light);
+}
+.fc-am::after { content: ' · '; }
+
+.fc-rev {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px; font-weight: 500;
+  color: var(--ink);
+}
+
+/* ── Totals row ── */
+.fc-totals-row td {
+  background: var(--bg);
+  border-top: 2px solid var(--ink);
+  padding: 5px 6px;
+}
+.fc-totals-label {
+  font-family: var(--font-display);
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--ink-mid);
+  padding-left: 8px;
+}
+.fc-totals-cell { text-align: center; }
+
+/* ── Drill panel ── */
+.drill-panel {
+  position: fixed; top: 0; right: 0;
+  width: min(500px, 100vw); height: 100vh;
+  background: var(--bg-white);
+  border-left: 1px solid var(--rule);
+  z-index: 1001;
+  display: flex; flex-direction: column;
+  box-shadow: -4px 0 16px rgba(0,0,0,0.12);
+}
+
+.drill-panel-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 16px;
+  background: var(--ink);
+  border-bottom: 3px solid var(--accent);
+  flex-shrink: 0;
+}
+
+.drill-panel-title {
+  font-family: var(--font-display);
+  font-size: 16px; font-weight: 800;
+  letter-spacing: 0.04em; text-transform: uppercase;
+  color: #fff;
+}
+
+.drill-panel-body {
+  flex: 1; overflow-y: auto;
+  padding: 16px;
+  background: var(--bg);
+}
+</style>
+
+<script>
+let activeCell = null;
+
+function loadDrillDown(cell) {
+  const location = cell.dataset.location;
+  const date     = cell.dataset.date;
+
+  if (activeCell) activeCell.classList.remove('fc-selected');
+  activeCell = cell;
+  cell.classList.add('fc-selected');
+
+  document.getElementById('drill-title').textContent =
+    location.toUpperCase() + '  ·  ' + date;
+  document.getElementById('drill-content').innerHTML =
+    '<div class="empty-state" style="padding:40px 0;font-size:13px;">Loading…</div>';
+  document.getElementById('drill-panel').style.display   = 'flex';
+  document.getElementById('drill-overlay').style.display = 'flex';
+
+  fetch(`{{ url_for('forecast_drill_down') }}?location=${encodeURIComponent(location)}&date=${encodeURIComponent(date)}`)
+    .then(r => r.text())
+    .then(html => { document.getElementById('drill-content').innerHTML = html; })
+    .catch(() => {
+      document.getElementById('drill-content').innerHTML =
+        '<div class="empty-state" style="padding:40px 0;color:var(--accent);">Failed to load.</div>';
+    });
+}
+
+function closeDrillDown() {
+  document.getElementById('drill-panel').style.display   = 'none';
+  document.getElementById('drill-overlay').style.display = 'none';
+  if (activeCell) { activeCell.classList.remove('fc-selected'); activeCell = null; }
+}
+</script>
+{% endblock %}
