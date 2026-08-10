@@ -244,6 +244,16 @@
     </a>
     {% endif %}
 
+    {% if user and ('admin' in user.roles or 'catering' in user.roles or 'gm' in user.roles) %}
+    <a href="{{ url_for('forecast') }}" class="home-card">
+      <div class="home-card-icon">📅</div>
+      <div class="home-card-body">
+        <div class="home-card-title">Forecast</div>
+        <div class="home-card-desc">Upcoming order volume and revenue by location. Download prep sheets.</div>
+      </div>
+    </a>
+    {% endif %}
+
 </div>
 
 <div class="home-footer">
