@@ -2068,7 +2068,7 @@ def _forecast_build_grid(days=7):
 # ─────────────────────────────────────────────
 
 @app.route("/forecast")
-@role_required("admin", "catering", "gm")
+@role_required("admin","catering","store","gm")
 def forecast():
     days = min(max(int(request.args.get("days", 7)), 2), 14)
     all_dates, matrix, _, route_map, daily_totals = _forecast_build_grid(days=days)
@@ -2093,7 +2093,7 @@ def forecast():
 
 
 @app.route("/forecast/drill-down")
-@role_required("admin", "catering", "gm")
+@role_required("admin","catering","store","gm")
 def forecast_drill_down():
     loc_name = request.args.get("location", "")
     date_str = request.args.get("date", "")
@@ -2204,7 +2204,7 @@ def forecast_drill_down():
 
 
 @app.route("/forecast/export")
-@role_required("admin", "catering", "gm")
+@role_required("admin","catering","gm")
 def forecast_export():
     loc_name = request.args.get("location", "")
     date_str = request.args.get("date", "")
