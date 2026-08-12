@@ -21,9 +21,9 @@
                  alt="Anita's" class="header-logo">
             </a>
             <span class="header-divider">|</span>
-            <span class="header-label">CATERING OPS</span>
+            <span class="header-label">{{ request.path.split('/')[1] | upper }}</span>
             <span class="header-divider">|</span>
-            <span class="header-sub">SCHEDULE MANAGER</span>
+            <span class="header-sub"></span>
         </div>
         <nav class="header-nav">
             {% block nav %}

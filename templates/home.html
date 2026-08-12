@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Catering Ops</title>
+    <title>Anita's Internal</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
@@ -181,15 +181,15 @@
         <img src="https://d3ciwvs59ifrt8.cloudfront.net/9cf1ec9b-d1e5-446e-bba8-79268b0d6b88/a2c61101-ffed-487e-9e8e-1248ae3a4cb7.png"
              alt="Anita's" class="home-logo">
         <span class="home-header-divider">|</span>
-        <span class="home-header-sub">CATERING OPS</span>
+        <span class="header-label">Home</span>
     </div>
     <a href="/.auth/logout" class="home-header-logout">LOGOUT</a>
 </header>
 
 <div class="home-hero">
     <div class="home-hero-eyebrow">Anita's New Mexico Style Grill</div>
-    <div class="home-hero-title">Catering Ops</div>
-    <div class="home-hero-sub">Internal operations tools for the catering department.</div>
+    <div class="home-hero-title">Home Screen</div>
+    <div class="home-hero-sub">Internal operations tools.</div>
 </div>
 
 <div class="home-grid">
@@ -210,13 +210,24 @@
         <span class="home-card-tag home-card-tag--live">LIVE</span>
         <div class="home-card-icon">🏪</div>
         <div class="home-card-label">Operations</div>
-        <div class="home-card-title">Store View</div>
+        <div class="home-card-title">Weekly Chart {% if 'admin' in user.roles or 'catering' in user.roles %}(Store View){% endif %}</div>
         <div class="home-card-desc">
             Read-only catering schedule filtered by location.
             View order details, times, and drivers for your store.
         </div>
         <div class="home-card-arrow">OPEN →</div>
     </a>
+    <a href="{{ url_for('forecast') }}" class="home-card">
+        <span class="home-card-tag home-card-tag--live">LIVE</span>
+        <div class="home-card-icon">📅</div>
+        <div class="home-card-label">Scheduling</div>
+        <div class="home-card-title">Forecast</div>
+        <div class="home-card-desc">
+            Upcoming order volume and revenue by location. Download prep sheets.
+        </div>
+        <div class="home-card-arrow">OPEN →</div>
+    </a>
+
     {% if 'admin' in user.roles or 'catering' in user.roles %}
     <div class="home-card home-card--disabled">
         <span class="home-card-tag home-card-tag--soon">COMING SOON</span>
@@ -244,20 +255,14 @@
     </a>
     {% endif %}
 
-    
-    <a href="{{ url_for('forecast') }}" class="home-card">
-      <div class="home-card-icon">📅</div>
-      <div class="home-card-body">
-        <div class="home-card-title">Forecast</div>
-        <div class="home-card-desc">Upcoming order volume and revenue by location. Download prep sheets.</div>
-      </div>
-    </a>
-    
+
+
+
 
 </div>
 
 <div class="home-footer">
-    <span>Anita's Catering Ops &nbsp;·&nbsp; Internal Use Only</span>
+    <span>Anita's Catering &nbsp;·&nbsp; Internal Use Only</span>
     <span>{{ year }}</span>
 </div>
 
