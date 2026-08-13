@@ -2004,7 +2004,9 @@ def _forecast_build_grid(days=7):
                ON h.location_id::uuid = l.store_guid
         JOIN order_checks c
                ON h.order_guid = c.order_guid
-        WHERE (h.estimated_fulfillment_date AT TIME ZONE l.timezone)::date
+        WHERE h.estimated_fulfillment_date
+              BETWEEN :start_pre AND :end_pre
+          AND (h.estimated_fulfillment_date AT TIME ZONE l.timezone)::date
               BETWEEN :start AND :end
           AND h.voided  = FALSE
           AND c.voided  = FALSE
@@ -2012,7 +2014,12 @@ def _forecast_build_grid(days=7):
     """)
 
     with engine.connect() as conn:
-        df = pd.read_sql(query, conn, params={"start": start_date, "end": end_date})
+        df = pd.read_sql(query, conn, params={
+            "start":     start_date,
+            "end":       end_date,
+            "start_pre": start_date - timedelta(days=1),
+            "end_pre":   end_date   + timedelta(days=1),
+        })
 
     if df.empty:
         return all_dates, [], {}, {}, [0.0] * days
@@ -2068,7 +2075,6 @@ def _forecast_build_grid(days=7):
 # ─────────────────────────────────────────────
 
 @app.route("/forecast")
-@role_required("admin","catering","store","gm")
 def forecast():
     days = min(max(int(request.args.get("days", 7)), 2), 14)
     all_dates, matrix, _, route_map, daily_totals = _forecast_build_grid(days=days)
@@ -2093,7 +2099,6 @@ def forecast():
 
 
 @app.route("/forecast/drill-down")
-@role_required("admin","catering","store","gm")
 def forecast_drill_down():
     loc_name = request.args.get("location", "")
     date_str = request.args.get("date", "")
@@ -2115,6 +2120,8 @@ def forecast_drill_down():
             FROM orders_head h
             JOIN order_checks c ON h.order_guid = c.order_guid
             WHERE h.location_id::uuid = :loc_id
+              AND h.estimated_fulfillment_date
+                  BETWEEN :sel_pre AND :sel_post
               AND (h.estimated_fulfillment_date AT TIME ZONE
                    (SELECT timezone FROM locations WHERE store_guid = :loc_id))::date = :sel_date
               AND h.voided = FALSE
@@ -2144,6 +2151,8 @@ def forecast_drill_down():
         JOIN OrderTotals ot
                ON h.order_guid = ot.order_guid
         WHERE h.location_id::uuid = :loc_id
+          AND h.estimated_fulfillment_date
+              BETWEEN :sel_pre AND :sel_post
           AND (h.estimated_fulfillment_date AT TIME ZONE
                (SELECT timezone FROM locations WHERE store_guid = :loc_id))::date = :sel_date
           AND h.voided  = FALSE
@@ -2155,7 +2164,12 @@ def forecast_drill_down():
 
     with engine.connect() as conn:
         full_df = pd.read_sql(detail_query, conn,
-                              params={"loc_id": str(loc_id), "sel_date": sel_date})
+                              params={
+                                  "loc_id":   str(loc_id),
+                                  "sel_date": sel_date,
+                                  "sel_pre":  sel_date - timedelta(days=1),
+                                  "sel_post": sel_date + timedelta(days=1),
+                              })
         full_df["mods"] = full_df["mods"].fillna("")
 
     bb_badges, taco_badges, orders = [], [], {}
@@ -2204,7 +2218,7 @@ def forecast_drill_down():
 
 
 @app.route("/forecast/export")
-@role_required("admin","catering","gm")
+@role_required("admin", "catering", "gm")
 def forecast_export():
     loc_name = request.args.get("location", "")
     date_str = request.args.get("date", "")
@@ -2233,7 +2247,12 @@ def forecast_export():
         target_dates.append(clicked_date + timedelta(days=days_to_add))
 
     target_date_strs = tuple(d.strftime("%Y-%m-%d") for d in target_dates)
-    params = {"loc_id": str(loc_id), "target_dates": target_date_strs}
+    params = {
+        "loc_id":       str(loc_id),
+        "target_dates": target_date_strs,
+        "min_pre":      target_dates[0]  - timedelta(days=1),
+        "max_post":     target_dates[-1] + timedelta(days=1),
+    }
 
     combined_query = text("""
         WITH OrderTotals AS (
@@ -2243,6 +2262,8 @@ def forecast_export():
             FROM orders_head h
             JOIN order_checks c ON h.order_guid = c.order_guid
             WHERE h.location_id::uuid = :loc_id
+              AND h.estimated_fulfillment_date
+                  BETWEEN :min_pre AND :max_post
               AND (h.estimated_fulfillment_date AT TIME ZONE
                    (SELECT timezone FROM locations WHERE store_guid = :loc_id))::date
                    IN :target_dates
@@ -2276,6 +2297,8 @@ def forecast_export():
         JOIN OrderTotals ot
                ON h.order_guid = ot.order_guid
         WHERE h.location_id::uuid = :loc_id
+          AND h.estimated_fulfillment_date
+              BETWEEN :min_pre AND :max_post
           AND (h.estimated_fulfillment_date AT TIME ZONE
                (SELECT timezone FROM locations WHERE store_guid = :loc_id))::date
                IN :target_dates
