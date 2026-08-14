@@ -125,7 +125,7 @@
                     <th class="col-dur">DURATION</th>
                     <th class="col-time">RETURN</th>
                     <th class="col-total">TOTAL</th>
-                    <th class="col-emp">#EMP</th>
+                    <th class="col-emp" title="Employee Number">#EMP</th>
                     <th class="col-driver">DRIVER</th>
                     <th class="col-customer">CUSTOMER</th>
                     <th class="col-company">COMPANY</th>
@@ -142,7 +142,7 @@
                     <button class="map-btn" onclick="openMap('{{ order.order_guid }}')" title="View map">&#128506;</button>
                 </td>
                 <td class="col-date">{{ order.display_date }}</td>
-                <td class="col-day">{{ order.display_day }}</td>
+                <td class="col-day"><span translate="yes" title="{{ order.display_date }}">{{ order.display_day }}</span></td>
                 <td class="col-svc">{{ order.service_type or '' }}</td>
                 <td class="col-travel">{{ order.travel_time or '' }}</td>
                 <td class="col-time">
@@ -208,6 +208,12 @@ function populateDriverDropdown(row) {
         opt.selected    = true;
         select.appendChild(opt);
     }
+    updateDriverColor(select);
+}
+
+function updateDriverColor(select) {
+    select.style.color      = select.value === 'No Driver!' ? '#c8392b' : '';
+    select.style.fontWeight = select.value === 'No Driver!' ? '700' : '';
 }
 
 async function saveDriver(btn) {
@@ -246,6 +252,12 @@ async function saveDriver(btn) {
 
 document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.order-row').forEach(row => populateDriverDropdown(row));
+
+    document.addEventListener('change', e => {
+        if (e.target.name === 'driver_assigned') {
+            updateDriverColor(e.target);
+        }
+    });
 });
 
 // ── Location dropdown ─────────────────────────────────────────────────────────

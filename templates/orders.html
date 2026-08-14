@@ -25,8 +25,8 @@
 
 {# ── Filter Bar ─────────────────────────────────────────────────────────────── #}
 <div class="filter-bar">
-    <a id="store-print-link"
-           href="/schedule/print?start={{ start_date }}&end={{ end_date }}{% for g in selected_locations %}&location={{ g }}{% endfor %}{% for g in dining_option_guids %}&dining_option={{ g }}{% endfor %}"
+    <a id="print-link"
+           href="/schedule/print?start={{ start_date }}&end={{ end_date }}&route=both{% for g in dining_option_guids %}&dining_option={{ g }}{% endfor %}"
            class="filter-btn filter-btn--ghost" target="_blank">PRINT VIEW</a>
     <form class="filter-form" method="GET" action="/schedule">
         <div class="filter-group">
@@ -139,7 +139,7 @@
                     data-location="{{ order.location_id or '' }}"
                     data-driver="{{ order.driver_assigned or '' }}">
                     <td class="col-date">{{ order.display_date }}</td>
-                    <td class="col-day">{{ order.display_day }}</td>
+                    <td class="col-day"><time datetime="{{ order.display_date }}" translate="yes">{{ order.display_day }}</time></td>
                     <td class="col-svc">
                         <input class="cell-input" type="text" name="service_type"
                                value="{{ order.service_type or '' }}"
@@ -251,10 +251,22 @@ function populateDriverDropdown(row) {
         opt.selected    = true;
         select.appendChild(opt);
     }
+    updateDriverColor(select);
+}
+
+function updateDriverColor(select) {
+    select.style.color      = select.value === 'No Driver!' ? '#c8392b' : '';
+    select.style.fontWeight = select.value === 'No Driver!' ? '700' : '';
 }
 
 document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.order-row').forEach(row => populateDriverDropdown(row));
+
+    document.addEventListener('change', e => {
+        if (e.target.name === 'driver_assigned') {
+            updateDriverColor(e.target);
+        }
+    });
 });
 
 // ── Route toggle ──────────────────────────────────────────────────────────────

@@ -331,6 +331,9 @@ def _get_drivers_by_location():
         if loc not in result:
             result[loc] = []
         result[loc].append(row["display_name"])
+        # Add "No Driver" to every location's list
+    for loc in result:
+        result[loc].append("No Driver!")
     return result
 
 def _get_store_orders(start_date, end_date, location_guids=None, dining_option_guids=None):
@@ -2075,6 +2078,7 @@ def _forecast_build_grid(days=7):
 # ─────────────────────────────────────────────
 
 @app.route("/forecast")
+@role_required("admin", "catering", "gm")
 def forecast():
     days = min(max(int(request.args.get("days", 7)), 2), 14)
     all_dates, matrix, _, route_map, daily_totals = _forecast_build_grid(days=days)
@@ -2099,6 +2103,7 @@ def forecast():
 
 
 @app.route("/forecast/drill-down")
+@role_required("admin", "catering", "gm")
 def forecast_drill_down():
     loc_name = request.args.get("location", "")
     date_str = request.args.get("date", "")

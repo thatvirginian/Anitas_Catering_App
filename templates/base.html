@@ -32,7 +32,9 @@
             <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint == 'index' %}active{% endif %}">SCHEDULE</a>
             {% endif %}
             <a href="{{ url_for('store') }}" class="nav-link {% if request.endpoint == 'store' %}active{% endif %}">STORE VIEW</a>
-            <a href="/.auth/logout" class="nav-link nav-link--logout">LOGOUT</a>
+            {% if 'admin' in user.roles %}
+              <a href="/.auth/logout" class="nav-link">LOGOUT</a>
+            {% endif %}
             {% endblock %}
         </nav>
     </header>
