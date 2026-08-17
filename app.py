@@ -1972,10 +1972,13 @@ def _forecast_get_location_maps():
     return loc_map, route_map
 
 
-def _forecast_build_grid(days=7):
+def _forecast_build_grid(days=7, time_from=None, time_to=None):
     """
     Returns (all_dates, matrix, loc_map, route_map, daily_totals) for the
     rolling N-day window starting tomorrow.
+
+    time_from / time_to are optional "HH:MM" strings (24h). When provided,
+    only orders whose local fulfillment time falls within the window are counted.
 
     matrix is a list of:
         {"location": str, "cells": [{"date", "date_str", "am", "pm",
@@ -1985,6 +1988,28 @@ def _forecast_build_grid(days=7):
     start_date = datetime.now().date() + timedelta(days=1)
     end_date   = start_date + timedelta(days=days - 1)
     all_dates  = [start_date + timedelta(days=n) for n in range(days)]
+
+    time_filter = ""
+    params = {
+        "start":     start_date,
+        "end":       end_date,
+        "start_pre": start_date - timedelta(days=1),
+        "end_pre":   end_date   + timedelta(days=1),
+    }
+    if time_from:
+        h, m = int(time_from.split(":")[0]), int(time_from.split(":")[1])
+        params["from_minutes"] = h * 60 + m
+        time_filter += """
+          AND (extract(hour FROM (h.estimated_fulfillment_date AT TIME ZONE l.timezone)) * 60
+             + extract(minute FROM (h.estimated_fulfillment_date AT TIME ZONE l.timezone)))
+             >= :from_minutes"""
+    if time_to:
+        h, m = int(time_to.split(":")[0]), int(time_to.split(":")[1])
+        params["to_minutes"] = h * 60 + m
+        time_filter += """
+          AND (extract(hour FROM (h.estimated_fulfillment_date AT TIME ZONE l.timezone)) * 60
+             + extract(minute FROM (h.estimated_fulfillment_date AT TIME ZONE l.timezone)))
+             <= :to_minutes"""
 
     query = text("""
         SELECT
@@ -2013,16 +2038,12 @@ def _forecast_build_grid(days=7):
               BETWEEN :start AND :end
           AND h.voided  = FALSE
           AND c.voided  = FALSE
+        """ + time_filter + """
         GROUP BY 1, 2, 3, 4, 5
     """)
 
     with engine.connect() as conn:
-        df = pd.read_sql(query, conn, params={
-            "start":     start_date,
-            "end":       end_date,
-            "start_pre": start_date - timedelta(days=1),
-            "end_pre":   end_date   + timedelta(days=1),
-        })
+        df = pd.read_sql(query, conn, params=params)
 
     if df.empty:
         return all_dates, [], {}, {}, [0.0] * days
@@ -2080,8 +2101,13 @@ def _forecast_build_grid(days=7):
 @app.route("/forecast")
 @role_required("admin", "catering", "gm")
 def forecast():
-    days = min(max(int(request.args.get("days", 7)), 2), 14)
-    all_dates, matrix, _, route_map, daily_totals = _forecast_build_grid(days=days)
+    days      = min(max(int(request.args.get("days", 7)), 7), 14)
+    time_from = request.args.get("time_from", "").strip() or None
+    time_to   = request.args.get("time_to",   "").strip() or None
+
+    all_dates, matrix, _, route_map, daily_totals = _forecast_build_grid(
+        days=days, time_from=time_from, time_to=time_to
+    )
 
     seen_routes  = []
     route_groups = {}
@@ -2099,14 +2125,18 @@ def forecast():
         seen_routes=seen_routes,
         daily_totals=daily_totals,
         days=days,
+        time_from=time_from or "",
+        time_to=time_to or "",
     )
 
 
 @app.route("/forecast/drill-down")
 @role_required("admin", "catering", "gm")
 def forecast_drill_down():
-    loc_name = request.args.get("location", "")
-    date_str = request.args.get("date", "")
+    loc_name  = request.args.get("location", "")
+    date_str  = request.args.get("date", "")
+    time_from = request.args.get("time_from", "").strip() or None
+    time_to   = request.args.get("time_to",   "").strip() or None
 
     loc_map, route_map = _forecast_get_location_maps()
     loc_id     = loc_map.get(loc_name)
@@ -2116,6 +2146,33 @@ def forecast_drill_down():
     route_rules     = ROUTE_LOOK_AHEAD_MAP.get(sel_route, ROUTE_LOOK_AHEAD_MAP["Default"])
     day_offsets     = route_rules.get(sel_date.weekday(), [])
     export_disabled = (len(day_offsets) == 0)
+
+    # Build time filter — must be done before the query is constructed
+    dd_time_filter = ""
+    dd_params = {
+        "loc_id":   str(loc_id),
+        "sel_date": sel_date,
+        "sel_pre":  sel_date - timedelta(days=1),
+        "sel_post": sel_date + timedelta(days=1),
+    }
+    if time_from:
+        h, m = int(time_from.split(":")[0]), int(time_from.split(":")[1])
+        dd_params["from_minutes"] = h * 60 + m
+        dd_time_filter += """
+          AND (extract(hour FROM (h.estimated_fulfillment_date AT TIME ZONE
+               (SELECT timezone FROM locations WHERE store_guid = :loc_id))) * 60
+             + extract(minute FROM (h.estimated_fulfillment_date AT TIME ZONE
+               (SELECT timezone FROM locations WHERE store_guid = :loc_id))))
+             >= :from_minutes"""
+    if time_to:
+        h, m = int(time_to.split(":")[0]), int(time_to.split(":")[1])
+        dd_params["to_minutes"] = h * 60 + m
+        dd_time_filter += """
+          AND (extract(hour FROM (h.estimated_fulfillment_date AT TIME ZONE
+               (SELECT timezone FROM locations WHERE store_guid = :loc_id))) * 60
+             + extract(minute FROM (h.estimated_fulfillment_date AT TIME ZONE
+               (SELECT timezone FROM locations WHERE store_guid = :loc_id))))
+             <= :to_minutes"""
 
     detail_query = text("""
         WITH OrderTotals AS (
@@ -2131,6 +2188,7 @@ def forecast_drill_down():
                    (SELECT timezone FROM locations WHERE store_guid = :loc_id))::date = :sel_date
               AND h.voided = FALSE
               AND c.voided = FALSE
+        """ + dd_time_filter + """
             GROUP BY h.order_guid
         )
         SELECT
@@ -2163,18 +2221,13 @@ def forecast_drill_down():
           AND h.voided  = FALSE
           AND c.voided  = FALSE
           AND oi.voided = FALSE
+        """ + dd_time_filter + """
         GROUP BY 1, 2, 3, 4, 5, 6, 8, 9
         ORDER BY local_time ASC
     """)
 
     with engine.connect() as conn:
-        full_df = pd.read_sql(detail_query, conn,
-                              params={
-                                  "loc_id":   str(loc_id),
-                                  "sel_date": sel_date,
-                                  "sel_pre":  sel_date - timedelta(days=1),
-                                  "sel_post": sel_date + timedelta(days=1),
-                              })
+        full_df = pd.read_sql(detail_query, conn, params=dd_params)
         full_df["mods"] = full_df["mods"].fillna("")
 
     bb_badges, taco_badges, orders = [], [], {}
@@ -2219,6 +2272,8 @@ def forecast_drill_down():
         orders=orders,
         export_disabled=export_disabled,
         day_name=sel_date.strftime("%A"),
+        time_from=time_from or "",
+        time_to=time_to or "",
     )
 
 

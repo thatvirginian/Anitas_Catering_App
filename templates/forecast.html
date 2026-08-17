@@ -4,18 +4,42 @@
 {% block content %}
 <div class="forecast-page">
 
-  {# ── Day-range toggle ── #}
-  <div class="filter-bar">
+  {# ── Filter bar ── #}
+  <form method="GET" action="{{ url_for('forecast') }}" class="filter-bar">
     <div class="filter-group">
       <span class="filter-label">Window</span>
       <div class="route-toggle">
-        {% for n in [2, 3, 7, 14] %}
-        <a href="{{ url_for('forecast', days=n) }}"
-           class="toggle-btn {% if days == n %}active{% endif %}">{{ n }}D</a>
+        {% for n in [7, 14] %}
+        <button type="submit" name="days" value="{{ n }}"
+                class="toggle-btn {% if days == n %}active{% endif %}"
+                onclick="this.form.querySelector('[name=time_from]').value=document.getElementById('tf').value;this.form.querySelector('[name=time_to]').value=document.getElementById('tt').value;">
+          {{ n }}D
+        </button>
         {% endfor %}
       </div>
     </div>
-  </div>
+    <div class="filter-group filter-group--time">
+      <span class="filter-label">Time</span>
+      <input type="time" id="tf" name="time_from" value="{{ time_from }}" class="time-input">
+      <span class="filter-sep">–</span>
+      <input type="time" id="tt" name="time_to"   value="{{ time_to }}"   class="time-input">
+      <input type="hidden" name="days" value="{{ days }}">
+      <button type="submit" class="filter-apply-btn">Apply</button>
+      {% if time_from or time_to %}
+      <a href="{{ url_for('forecast', days=days) }}" class="filter-clear-btn">Clear</a>
+      {% endif %}
+    </div>
+    {% if time_from or time_to %}
+    <div class="filter-active-badge">
+      <span class="filter-label">Showing</span>
+      <span class="filter-active-text">
+        {% if time_from %}{{ time_from }}{% else %}start{% endif %}
+        –
+        {% if time_to %}{{ time_to }}{% else %}end{% endif %}
+      </span>
+    </div>
+    {% endif %}
+  </form>
 
   {# ── Grid ── #}
   <div class="forecast-wrap">
@@ -61,8 +85,8 @@
                 {% endif %}>
               {% if not cell.is_empty %}
               <span class="fc-ampm">
-                <span class="fc-am">{{ cell.am }}am</span>
-                <span class="fc-pm">{{ cell.pm }}pm</span>
+                <span class="fc-am">{{ cell.am }} :AM</span>
+                <span class="fc-pm">{{ cell.pm }} :PM</span>
               </span>
               <span class="fc-rev">${{ '{:,.0f}'.format(cell.rev) }}</span>
               {% endif %}
@@ -104,6 +128,60 @@
 
 
 <style>
+/* ── Filter bar ── */
+.filter-bar        { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; }
+.filter-group--time { display: flex; align-items: center; gap: 8px; }
+
+.time-input {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--rule);
+  background: var(--bg-white);
+  color: var(--ink);
+  width: 110px;
+}
+
+.filter-sep {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-light);
+}
+
+.filter-apply-btn {
+  font-family: var(--font-display);
+  font-size: 11px; font-weight: 700;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 4px 14px;
+  background: var(--ink);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+}
+.filter-apply-btn:hover { background: var(--accent); }
+
+.filter-clear-btn {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-light);
+  text-decoration: none;
+  padding: 4px 6px;
+}
+.filter-clear-btn:hover { color: var(--accent); }
+
+.filter-active-badge {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--accent);
+  background: #fdf0f0;
+}
+.filter-active-text {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 500;
+}
+
 /* ── Wrap ── */
 .forecast-wrap { padding: 0 16px 40px; }
 
@@ -231,6 +309,8 @@
 
 <script>
 let activeCell = null;
+const TIME_FROM = "{{ time_from }}";
+const TIME_TO   = "{{ time_to }}";
 
 function loadDrillDown(cell) {
   const location = cell.dataset.location;
@@ -240,14 +320,21 @@ function loadDrillDown(cell) {
   activeCell = cell;
   cell.classList.add('fc-selected');
 
-  document.getElementById('drill-title').textContent =
-    location.toUpperCase() + '  ·  ' + date;
+  let titleText = location.toUpperCase() + '  ·  ' + date;
+  if (TIME_FROM || TIME_TO) {
+    titleText += '  ·  ' + (TIME_FROM || '…') + '–' + (TIME_TO || '…');
+  }
+  document.getElementById('drill-title').textContent = titleText;
   document.getElementById('drill-content').innerHTML =
     '<div class="empty-state" style="padding:40px 0;font-size:13px;">Loading…</div>';
   document.getElementById('drill-panel').style.display   = 'flex';
   document.getElementById('drill-overlay').style.display = 'flex';
 
-  fetch(`{{ url_for('forecast_drill_down') }}?location=${encodeURIComponent(location)}&date=${encodeURIComponent(date)}`)
+  let url = `{{ url_for('forecast_drill_down') }}?location=${encodeURIComponent(location)}&date=${encodeURIComponent(date)}`;
+  if (TIME_FROM) url += `&time_from=${encodeURIComponent(TIME_FROM)}`;
+  if (TIME_TO)   url += `&time_to=${encodeURIComponent(TIME_TO)}`;
+
+  fetch(url)
     .then(r => r.text())
     .then(html => { document.getElementById('drill-content').innerHTML = html; })
     .catch(() => {
