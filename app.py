@@ -2099,7 +2099,7 @@ def _forecast_build_grid(days=7, time_from=None, time_to=None):
 # ─────────────────────────────────────────────
 
 @app.route("/forecast")
-@role_required("admin", "catering", "gm")
+@role_required("admin", "catering", "gm","store")
 def forecast():
     days      = min(max(int(request.args.get("days", 7)), 7), 14)
     time_from = request.args.get("time_from", "").strip() or None
@@ -2131,7 +2131,7 @@ def forecast():
 
 
 @app.route("/forecast/drill-down")
-@role_required("admin", "catering", "gm")
+@role_required("admin", "catering", "gm", "store")
 def forecast_drill_down():
     loc_name  = request.args.get("location", "")
     date_str  = request.args.get("date", "")
