@@ -503,8 +503,14 @@
                 <span class="summary-row-value">{{ order.checks | length }}</span>
             </div>
         </div>
-        {% if order.server_name or order.rc_name %}
+        {% if order.server_name or order.rc_name or order.dining_option %}
         <div class="summary-cell">
+            {% if order.dining_option %}
+            <div class="summary-row">
+                <span class="summary-row-label">Dining</span>
+                <span class="summary-row-value">{{ order.dining_option }}</span>
+            </div>
+            {% endif %}
             {% if order.server_name %}
             <div class="summary-row">
                 <span class="summary-row-label">Server</span>

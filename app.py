@@ -1216,8 +1216,16 @@ def print_drivers():
 
 # ── SharePoint / Graph API helpers ────────────────────────────────────────────
 
+# SharePoint token cache
+_sp_token_cache = {"token": None, "expires_at": 0}
+
 def _get_graph_token():
-    """Get an app-level OAuth token from Microsoft for Graph API calls."""
+    """Get an app-level OAuth token, cached until near expiry."""
+    import time
+    now = time.time()
+    if _sp_token_cache["token"] and now < _sp_token_cache["expires_at"] - 60:
+        return _sp_token_cache["token"]
+
     resp = http_requests.post(
         f"https://login.microsoftonline.com/{SP_TENANT_ID}/oauth2/v2.0/token",
         data={
@@ -1228,7 +1236,10 @@ def _get_graph_token():
         }
     )
     resp.raise_for_status()
-    return resp.json()["access_token"]
+    result = resp.json()
+    _sp_token_cache["token"]      = result["access_token"]
+    _sp_token_cache["expires_at"] = now + result.get("expires_in", 3600)
+    return _sp_token_cache["token"]
 
 
 def _sp_upload(order_guid, filename, file_bytes):
@@ -1568,7 +1579,7 @@ def _collect_mods(modifiers, depth=0):
     return parts
 
 
-def _process_order(raw, server_name="", rc_name="", opened_by_names=None, location_name="", approver_names=None):
+def _process_order(raw, server_name="", rc_name="", opened_by_names=None, location_name="", approver_names=None, dining_option=""):
     """Transform raw Toast API order dict into clean template context."""
     if opened_by_names is None:
         opened_by_names = {}
@@ -1834,6 +1845,7 @@ def _process_order(raw, server_name="", rc_name="", opened_by_names=None, locati
         "delivery":      delivery,
         "server_name":   server_name,
         "rc_name":       rc_name,
+        "dining_option": dining_option,
         "checks":        checks,
         "location_name": location_name,
     }
@@ -1854,9 +1866,9 @@ def order_detail(order_guid):
     if not row:
         abort(404)
 
-    location_id = row[0]
+    location_id   = row[0]
     location_name = row[1] or ""
-    token       = _get_toast_token()
+    token         = _get_toast_token()
 
     # 2. Fetch order
     order_raw = _fetch_toast(f"/orders/v2/orders/{order_guid}", token, location_id)
@@ -1876,7 +1888,15 @@ def order_detail(order_guid):
         if rc:
             rc_name = rc.get("name") or ""
 
-    # 5. Fetch opened_by name per check
+    # 5. Fetch dining option name
+    do_name = ""
+    do_guid = (order_raw.get("diningOption") or {}).get("guid")
+    if do_guid:
+        do = _fetch_toast(f"/config/v2/diningOptions/{do_guid}", token, location_id)
+        if do:
+            do_name = do.get("name") or ""
+
+    # 6. Fetch opened_by name per check
     opened_by_names = {}
     for chk in order_raw.get("checks") or []:
         ob_guid = (chk.get("openedBy") or {}).get("guid")
@@ -1884,7 +1904,7 @@ def order_detail(order_guid):
             name = _fetch_employee_name(ob_guid, token, location_id)
             if name:
                 opened_by_names[chk.get("guid")] = name
-    # 6. Collect and resolve discount approver GUIDs
+    # 7. Collect and resolve discount approver GUIDs
     approver_guids = set()
     for chk in order_raw.get("checks") or []:
         for sel in chk.get("selections", []):
@@ -1902,8 +1922,8 @@ def order_detail(order_guid):
         name = _fetch_employee_name(guid, token, location_id)
         if name:
             approver_names[guid] = name
-    # 7. Process and render
-    order = _process_order(order_raw, server_name, rc_name, opened_by_names, location_name, approver_names)
+    # 8. Process and render
+    order = _process_order(order_raw, server_name, rc_name, opened_by_names, location_name, approver_names, do_name)
     return render_template("order_detail.html", order=order)
 
 
@@ -2099,7 +2119,7 @@ def _forecast_build_grid(days=7, time_from=None, time_to=None):
 # ─────────────────────────────────────────────
 
 @app.route("/forecast")
-@role_required("admin", "catering", "gm","store")
+@role_required("admin", "catering", "gm")
 def forecast():
     days      = min(max(int(request.args.get("days", 7)), 7), 14)
     time_from = request.args.get("time_from", "").strip() or None
@@ -2131,7 +2151,7 @@ def forecast():
 
 
 @app.route("/forecast/drill-down")
-@role_required("admin", "catering", "gm", "store")
+@role_required("admin", "catering", "gm")
 def forecast_drill_down():
     loc_name  = request.args.get("location", "")
     date_str  = request.args.get("date", "")
