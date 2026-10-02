@@ -2438,6 +2438,16 @@ def forecast_export():
     )
 
 
+@app.route("/admin/reload-cache")
+@role_required("admin")
+def reload_cache():
+    _load_cache()
+    return jsonify({
+        "status": "ok",
+        "locations": len(_cache["locations"]),
+        "dining_options": len(_cache["dining_options"]),
+    })
+
 
 
 
