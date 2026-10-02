@@ -1300,7 +1300,7 @@ def _sp_delete(sharepoint_id):
 def _get_attachments(order_guid):
     with engine.connect() as conn:
         rows = conn.execute(text("""
-            SELECT id, filename, uploaded_by, uploaded_at
+            SELECT id, filename, uploaded_by, uploaded_at AT TIME ZONE 'America/New_York' AS uploaded_at
             FROM order_attachments
             WHERE order_guid = :order_guid
             ORDER BY uploaded_at DESC
