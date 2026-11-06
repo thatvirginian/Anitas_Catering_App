@@ -59,7 +59,7 @@ def load_user():
 
     if not user_id:
         # Local dev — no EasyAuth headers present
-        g.user = {"user_id": "dev", "username": "dev@local", "roles": ["admin"], "is_admin": True}
+        g.user = {"user_id": "dev", "username": "arlington@anitascorp.com", "roles": ["store"], "is_admin": True}
         return
 
     roles = []
@@ -626,6 +626,7 @@ def index():
     ]
     unread          = _get_unread_notifications(all_guids, g.user["username"])
     has_attachments = _get_orders_with_attachments(all_guids)
+    all_printed     = _get_orders_printed_by_store(all_guids)
 
     return render_template(
         "orders.html",
@@ -640,6 +641,7 @@ def index():
         drivers_by_location  = _get_drivers_by_location(),
         unread_notifications = unread,
         has_attachments      = has_attachments,
+        all_printed          = all_printed,
     )
 
 
@@ -967,6 +969,7 @@ def store():
     all_guids       = [o["order_guid"] for data in grouped.values() for o in data["orders"]]
     unread          = _get_unread_notifications(all_guids, g.user["username"])
     has_attachments = _get_orders_with_attachments(all_guids)
+    all_printed     = _get_orders_printed_by_store(all_guids)
 
     return render_template(
         "store.html",
@@ -981,6 +984,7 @@ def store():
         drivers_by_location   = _get_drivers_by_location(),
         unread_notifications  = unread,
         has_attachments       = has_attachments,
+        all_printed           = all_printed,
     )
 
 
@@ -1300,7 +1304,9 @@ def _sp_delete(sharepoint_id):
 def _get_attachments(order_guid):
     with engine.connect() as conn:
         rows = conn.execute(text("""
-            SELECT id, filename, uploaded_by, uploaded_at AT TIME ZONE 'America/New_York' AS uploaded_at
+            SELECT id, filename, uploaded_by,
+                   uploaded_at AT TIME ZONE 'America/New_York' AS uploaded_at,
+                   printed_log
             FROM order_attachments
             WHERE order_guid = :order_guid
             ORDER BY uploaded_at DESC
@@ -1337,6 +1343,26 @@ def _get_orders_with_attachments(order_guids):
     return {r["order_guid"] for r in rows}
 
 
+def _get_orders_printed_by_store(order_guids):
+    """
+    Returns set of order_guids where every attachment has at least one entry
+    in printed_log (i.e. the store has printed all docs for that order).
+    Only orders that actually have attachments are considered.
+    """
+    if not order_guids:
+        return set()
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT order_guid
+            FROM order_attachments
+            WHERE order_guid = ANY(:guids)
+            GROUP BY order_guid
+            HAVING COUNT(*) > 0
+               AND COUNT(*) = COUNT(CASE WHEN jsonb_array_length(printed_log) > 0 THEN 1 END)
+        """), {"guids": list(order_guids)}).mappings().all()
+    return {r["order_guid"] for r in rows}
+
+
 def _create_notification(order_guid, change_type):
     with engine.begin() as conn:
         conn.execute(text("""
@@ -1367,9 +1393,23 @@ def _mark_seen(order_guid):
 def list_attachments(order_guid):
     attachments = _get_attachments(order_guid)
     # Serialize dates
+    eastern = pytz.timezone("America/New_York")
     for a in attachments:
         if a.get("uploaded_at"):
             a["uploaded_at"] = a["uploaded_at"].strftime("%m/%d/%Y %I:%M %p")
+        # Build a human-readable list for the popover — JS just renders these strings
+        log = a.get("printed_log") or []
+        formatted = []
+        for entry in log:
+            try:
+                dt = datetime.strptime(entry["printed_at"], "%Y-%m-%d %H:%M:%S")
+                dt = eastern.localize(dt)
+                # No %-m / %-I here: those directives don't exist on Windows
+                label = f"{dt.month}/{dt.day}/{dt.year} {dt.strftime('%I:%M %p').lstrip('0')} ET"
+            except Exception:
+                label = entry.get("printed_at", "")
+            formatted.append({"email": entry["email"], "printed_at": label})
+        a["printed_log"] = formatted
     return jsonify({"attachments": attachments})
 
 
@@ -1451,6 +1491,54 @@ def download_attachment(attachment_id):
         mimetype="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{row["filename"]}"'}
     )
+
+
+@app.route("/attachments/<int:attachment_id>/printed", methods=["POST"])
+@role_required("admin", "catering", "gm", "store")
+def mark_attachment_printed(attachment_id):
+    """Record first print per user. Only records if current user hasn't printed it before."""
+    with engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT oa.id, oa.printed_log, oh.location_id::text
+            FROM order_attachments oa
+            JOIN orders_head oh ON oh.order_guid = oa.order_guid
+            WHERE oa.id = :id
+        """), {"id": attachment_id}).mappings().first()
+
+    if not row:
+        abort(404)
+
+    # Look up the store's contact_email
+    with engine.connect() as conn:
+        contact_email = conn.execute(text("""
+            SELECT contact_email FROM locations WHERE store_guid::text = :loc_id
+        """), {"loc_id": row["location_id"]}).scalar()
+
+    # Only record if the current user IS the store
+    current_email = g.user["username"]
+    if not contact_email or current_email.lower() != contact_email.lower():
+        return jsonify({"status": "ok", "recorded": False})
+
+    # Check if this user has already printed it
+    import json as _json
+    printed_log = row["printed_log"] or []
+    already_printed = any(e["email"] == current_email for e in printed_log)
+    if already_printed:
+        return jsonify({"status": "ok", "recorded": False, "printed_log": printed_log})
+
+    # Append this user's first print
+    with engine.begin() as conn:
+        updated_log = conn.execute(text("""
+            UPDATE order_attachments
+            SET printed_log = printed_log || jsonb_build_object(
+                'email', :email,
+                'printed_at', to_char(NOW() AT TIME ZONE 'America/New_York', 'YYYY-MM-DD HH24:MI:SS')
+            )::jsonb
+            WHERE id = :id
+            RETURNING printed_log
+        """), {"id": attachment_id, "email": current_email}).scalar()
+
+    return jsonify({"status": "ok", "recorded": True, "printed_log": updated_log})
 
 
 @app.route("/attachments/<int:attachment_id>/delete", methods=["POST"])

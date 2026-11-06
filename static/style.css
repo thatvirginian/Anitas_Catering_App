@@ -850,3 +850,52 @@ body {
     background: #2a7a3a; border-radius: 50%;
     border: 1.5px solid #fff;
 }
+
+/* Blue dot — all attachments have been printed by the store */
+.attach-btn.has-printed {
+    position: relative;
+}
+.attach-btn.has-printed::after {
+    content: '';
+    position: absolute; bottom: 0; right: 0;
+    width: 8px; height: 8px;
+    background: #1a6fa8; border-radius: 50%;
+    border: 1.5px solid #fff;
+}
+/* If both has-notification and has-printed, notification (red, top-right) wins */
+.attach-btn.has-notification.has-printed::after {
+    background: #c8392b;
+    top: 0; bottom: auto;
+}
+
+/* Printed badge: fixed slot between file info and buttons so badges line up in a column */
+.attach-file-info { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.attach-printed-slot {
+    width: 24px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 10px;
+}
+.attach-printed-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px;
+    background: #1a6fa8; color: #fff;
+    border-radius: 50%;
+    font-size: 10px; font-weight: 700; line-height: 1;
+    cursor: pointer;
+    transition: transform 0.1s;
+}
+.attach-printed-badge:hover { transform: scale(1.15); }
+
+/* Popover for print timestamp */
+.attach-print-popover {
+    position: fixed;
+    z-index: 9999;
+    background: var(--bg, #fff);
+    border: 1px solid var(--rule, #ddd);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    padding: 8px 12px;
+    font-family: var(--font-body, sans-serif);
+    font-size: 11px;
+    color: var(--ink, #222);
+    white-space: nowrap;
+}

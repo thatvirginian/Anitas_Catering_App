@@ -370,7 +370,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 <!-- ── Attachment Modal ──────────────────────────────────────────────────── -->
 <div id="attach-modal-overlay" class="map-overlay" style="display:none;" onclick="closeAttachments(event)">
-    <div class="map-modal" style="max-width:560px;" onclick="event.stopPropagation()">
+    <div class="map-modal" style="max-width:720px;" onclick="event.stopPropagation(); document.querySelectorAll('.attach-print-popover').forEach(p=>p.remove())">
         <div class="attach-modal-header">
             <span class="attach-modal-title">📎 Attachments</span>
             <button class="map-close-btn" onclick="closeAttachments()">✕</button>
@@ -422,15 +422,23 @@ async function loadAttachments(orderGuid) {
 
         list.innerHTML = data.attachments.map(a => `
             <div class="attach-file-item">
-                <div>
+                <div class="attach-file-info">
                     <div class="attach-file-name">📄 ${a.filename}</div>
                     <div class="attach-file-meta">Uploaded by ${a.uploaded_by} · ${a.uploaded_at}</div>
+                </div>
+                <div class="attach-printed-slot">
+                    ${a.printed_log && a.printed_log.length > 0 ? `
+                    <span class="attach-printed-badge"
+                          title="Printed by ${a.printed_log.length} user(s)"
+                          data-printed-log="${encodeURIComponent(JSON.stringify(a.printed_log))}">✓</span>
+                    ` : ''}
                 </div>
                 <div class="attach-file-actions">
                     <a href="/attachments/${a.id}/download"
                        target="_blank"
                        class="filter-btn filter-btn--ghost"
-                       style="font-size:10px;padding:4px 10px;text-decoration:none;">
+                       style="font-size:10px;padding:4px 10px;text-decoration:none;"
+                       onclick="recordPrint(${a.id}, '${currentAttachOrderGuid}')">
                        PRINT
                     </a>
                     ${CAN_ADMIN_ATTACH ? `
@@ -439,6 +447,16 @@ async function loadAttachments(orderGuid) {
                 </div>
             </div>
         `).join('');
+
+        // Wire printed badge clicks — log already formatted by server
+        list.querySelectorAll('.attach-printed-badge').forEach(badge => {
+            badge.addEventListener('click', function(ev) {
+                // Stop the click reaching the modal, whose onclick removes all popovers
+                ev.stopPropagation();
+                const log = JSON.parse(decodeURIComponent(this.dataset.printedLog || '%5B%5D'));
+                showPrintedPopover(this, log);
+            });
+        });
     } catch (e) {
         document.getElementById('attach-file-list').innerHTML =
             '<div class="attach-empty">Error loading attachments.</div>';
@@ -487,6 +505,60 @@ async function uploadAttachment() {
         btn.textContent = 'UPLOAD';
         btn.disabled    = false;
     }
+}
+
+async function recordPrint(attachmentId, orderGuid) {
+    try {
+        const resp = await fetch(`/attachments/${attachmentId}/printed`, {method: 'POST'});
+        const data = await resp.json();
+        if (data.status === 'ok' && data.recorded) {
+            await loadAttachments(orderGuid);
+            const attachResp = await fetch(`/attachments/${orderGuid}`);
+            const attachData = await attachResp.json();
+            if (attachData.attachments && attachData.attachments.length > 0 &&
+                attachData.attachments.every(a => a.printed_log && a.printed_log.length > 0)) {
+                document.querySelectorAll('.attach-btn').forEach(b => {
+                    if (b.closest('tr') && b.closest('tr').dataset.guid === orderGuid)
+                        b.classList.add('has-printed');
+                });
+            }
+        }
+    } catch (e) { /* silent */ }
+}
+
+function showPrintedPopover(el, printedLog) {
+    // Toggle off if already open for this element
+    const existing = document.querySelector('.attach-print-popover');
+    if (existing) {
+        existing.remove();
+        if (existing._anchor === el) return;
+    }
+
+    if (!printedLog || printedLog.length === 0) return;
+
+    const rows = printedLog.map(e =>
+        `<div style="margin-top:4px">${e.email}<br>
+         <span style="color:var(--ink-light)">${e.printed_at}</span></div>`
+    ).join('');
+
+    const pop = document.createElement('div');
+    pop.className = 'attach-print-popover';
+    pop._anchor = el;
+    pop.innerHTML = `<strong>Printed by</strong>${rows}`;
+
+    document.body.appendChild(pop);
+
+    const rect = el.getBoundingClientRect();
+    pop.style.left = `${rect.left}px`;
+    pop.style.top  = `${rect.bottom + 6}px`;
+
+    const dismiss = (e) => {
+        if (!pop.contains(e.target) && e.target !== el) {
+            pop.remove();
+            document.removeEventListener('click', dismiss);
+        }
+    };
+    setTimeout(() => document.addEventListener('click', dismiss), 0);
 }
 
 async function deleteAttachment(attachmentId) {
