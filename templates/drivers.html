@@ -28,6 +28,15 @@
     .filter-toggle { flex: 1; padding: 5px 8px; border: 1px solid #ddd; background: #f5f5f5; cursor: pointer; font-size: 11px; font-weight: 600; border-radius: 4px; color: #555; transition: all 0.15s; }
     .filter-toggle:hover { background: #e8e8e8; }
     .filter-toggle.active { background: #1a5fa8; color: #fff; border-color: #1a5fa8; }
+    .right-col { display: flex; flex-direction: column; gap: 20px; align-self: start; }
+    .group-row { align-items: center; }
+    .group-row .group-name { flex: 1; }
+    .group-row .group-count { font-size: 11px; color: #888; }
+    .group-icon-btn { background: none; border: none; cursor: pointer; color: #888; font-size: 13px; padding: 2px 5px; border-radius: 3px; }
+    .group-icon-btn:hover { background: #eee; color: #222; }
+    .group-add-row { display: flex; gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 1px solid #eee; }
+    .group-add-row .form-control { flex: 1; }
+    .group-empty { font-size: 12px; color: #888; font-style: italic; padding: 6px 0; }
 </style>
 
 <div class="admin-container">
@@ -54,6 +63,7 @@
                     id="driver-btn-{{ d.id }}"
                     data-driver='{{ d | tojson }}'
                     data-assignments='{{ assignments.get(d.id, []) | tojson }}'
+                    data-groups='{{ driver_groups.get(d.id, []) | tojson }}'
                     onclick="editDriverFromBtn(this)">
                 <strong>{{ d.nickname or d.full_name }}</strong>
                 <span class="status-dot">{% if d.active %}● Active{% else %}○ Inactive{% endif %}</span>
@@ -156,19 +166,38 @@
             </form>
         </div>
 
-        <div class="editor-card" id="location-assignment-card" style="display:none;">
-            <h3 style="margin-top:0; margin-bottom:5px; color:#1a5fa8;">Assigned Stores</h3>
-            <p style="font-size:12px; color:#666; margin-bottom:15px;">Check every store location where this driver is allowed to run assignments.</p>
-            <div class="store-list">
-                {% for loc in locations %}
-                <label class="store-item">
-                    <input type="checkbox" class="store-assign-cb" value="{{ loc.guid }}">
-                    <span>{{ loc.name }}</span>
-                </label>
-                {% endfor %}
+        <div class="right-col">
+            <div class="editor-card" id="location-assignment-card" style="display:none;">
+                <h3 style="margin-top:0; margin-bottom:5px; color:#1a5fa8;">Assigned Stores</h3>
+                <p style="font-size:12px; color:#666; margin-bottom:15px;">Check every store location where this driver is allowed to run assignments.</p>
+                <div class="store-list">
+                    {% for loc in locations %}
+                    <label class="store-item">
+                        <input type="checkbox" class="store-assign-cb" value="{{ loc.guid }}">
+                        <span>{{ loc.name }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+                <div class="action-row" style="justify-content: flex-end;">
+                    <button type="button" class="btn-save" style="background:#2e7d32;" onclick="submitLocationAssignments()">UPDATE STORE ASSIGNMENTS</button>
+                </div>
             </div>
-            <div class="action-row" style="justify-content: flex-end;">
-                <button type="button" class="btn-save" style="background:#2e7d32;" onclick="submitLocationAssignments()">UPDATE STORE ASSIGNMENTS</button>
+
+            <div class="editor-card" id="group-assignment-card">
+                <h3 style="margin-top:0; margin-bottom:5px; color:#1a5fa8;">Driver Groups</h3>
+                <p id="group-hint" style="font-size:12px; color:#666; margin-bottom:10px;">
+                    Select a driver to choose their groups. Groups can be added, renamed or deleted here at any time.
+                </p>
+                <div class="store-list" id="group-list"></div>
+                <div class="group-add-row">
+                    <input type="text" class="form-control" id="new-group-name" maxlength="60"
+                           placeholder="New group name" onkeydown="if(event.key==='Enter'){event.preventDefault();addGroup();}">
+                    <button type="button" class="btn-save" style="background:#2e7d32;" onclick="addGroup()">ADD GROUP</button>
+                </div>
+                <div class="action-row" style="justify-content: space-between;">
+                    <span id="group-status-msg" style="font-weight:600; align-self:center; font-size:12px;"></span>
+                    <button type="button" class="btn-save" id="group-save-btn" onclick="submitGroupAssignments()" disabled>UPDATE GROUPS</button>
+                </div>
             </div>
         </div>
     </div>
@@ -176,8 +205,178 @@
 
 <script>
 let selectedDriverId = null;
+let groups = {{ groups | tojson }};   // [{id, name}], kept in sync as groups are added/renamed/deleted
 
 let currentFilter = 'active';
+
+// ── Driver groups ─────────────────────────────────────────────────────────────
+function driverBtn(id) { return document.getElementById(`driver-btn-${id}`); }
+
+function savedGroupsFor(id) {
+    const btn = id ? driverBtn(id) : null;
+    return btn ? JSON.parse(btn.dataset.groups || '[]') : [];
+}
+
+function groupMemberCount(groupId) {
+    let n = 0;
+    document.querySelectorAll('.driver-item').forEach(b => {
+        if (JSON.parse(b.dataset.groups || '[]').includes(groupId)) n++;
+    });
+    return n;
+}
+
+// useSaved=true  -> checkboxes show the selected driver's saved groups
+// useSaved=false -> keep whatever is currently ticked (so adding a group
+//                   doesn't wipe unsaved ticks)
+function renderGroups(useSaved) {
+    const list = document.getElementById('group-list');
+    const checked = useSaved
+        ? new Set(savedGroupsFor(selectedDriverId))
+        : new Set([...list.querySelectorAll('.group-assign-cb:checked')].map(cb => Number(cb.value)));
+    const hasDriver = !!selectedDriverId;
+
+    list.innerHTML = '';
+    if (!groups.length) {
+        const empty = document.createElement('div');
+        empty.className = 'group-empty';
+        empty.textContent = 'No groups yet. Add one below.';
+        list.appendChild(empty);
+    }
+
+    groups.forEach(g => {
+        const row = document.createElement('div');
+        row.className = 'store-item group-row';
+        row.dataset.groupId = g.id;
+
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'group-assign-cb';
+        cb.value = g.id;
+        cb.checked = hasDriver && checked.has(g.id);
+        cb.disabled = !hasDriver;
+
+        const name = document.createElement('span');
+        name.className = 'group-name';
+        name.textContent = g.name;
+
+        const count = document.createElement('span');
+        count.className = 'group-count';
+        count.textContent = `${groupMemberCount(g.id)} driver${groupMemberCount(g.id) === 1 ? '' : 's'}`;
+
+        const rename = document.createElement('button');
+        rename.type = 'button'; rename.className = 'group-icon-btn'; rename.title = 'Rename group';
+        rename.textContent = '✎';
+        rename.addEventListener('click', () => renameGroup(g.id));
+
+        const del = document.createElement('button');
+        del.type = 'button'; del.className = 'group-icon-btn'; del.title = 'Delete group';
+        del.textContent = '✕';
+        del.addEventListener('click', () => deleteGroup(g.id));
+
+        row.append(cb, name, count, rename, del);
+        list.appendChild(row);
+    });
+
+    document.getElementById('group-save-btn').disabled = !hasDriver || !groups.length;
+    document.getElementById('group-hint').style.display = hasDriver ? 'none' : '';
+}
+
+function setGroupStatus(msg, color) {
+    const el = document.getElementById('group-status-msg');
+    el.textContent = msg;
+    el.style.color = color || '#555';
+    if (msg) setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 3000);
+}
+
+async function postJSON(url, body) {
+    const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    });
+    let data = {};
+    try { data = await resp.json(); } catch (_) {}
+    return { ok: resp.ok && data.status === 'ok', data };
+}
+
+function sortGroups() {
+    groups.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+}
+
+async function addGroup() {
+    const input = document.getElementById('new-group-name');
+    const name = input.value.trim();
+    if (!name) return;
+    try {
+        const { ok, data } = await postJSON('/drivers/groups/save', { name });
+        if (!ok) { setGroupStatus(data.message || 'Could not add group', '#c8392b'); return; }
+        groups.push({ id: data.id, name: data.name });
+        sortGroups();
+        input.value = '';
+        renderGroups(false);
+        setGroupStatus(`Added "${data.name}"`, '#2e7d32');
+    } catch (err) {
+        setGroupStatus('Connection error', '#c8392b');
+    }
+}
+
+async function renameGroup(id) {
+    const g = groups.find(x => x.id === id);
+    if (!g) return;
+    const name = (window.prompt('Rename group', g.name) || '').trim();
+    if (!name || name === g.name) return;
+    try {
+        const { ok, data } = await postJSON('/drivers/groups/save', { id, name });
+        if (!ok) { setGroupStatus(data.message || 'Could not rename group', '#c8392b'); return; }
+        g.name = data.name;
+        sortGroups();
+        renderGroups(false);
+        setGroupStatus('Renamed', '#2e7d32');
+    } catch (err) {
+        setGroupStatus('Connection error', '#c8392b');
+    }
+}
+
+async function deleteGroup(id) {
+    const g = groups.find(x => x.id === id);
+    if (!g) return;
+    if (!confirm(`Delete the group "${g.name}"? Drivers are not deleted; they just leave this group.`)) return;
+    try {
+        const { ok, data } = await postJSON('/drivers/groups/delete', { id });
+        if (!ok) { setGroupStatus(data.message || 'Could not delete group', '#c8392b'); return; }
+        groups = groups.filter(x => x.id !== id);
+        // Drop the deleted id from every driver's cached memberships
+        document.querySelectorAll('.driver-item').forEach(b => {
+            const ids = JSON.parse(b.dataset.groups || '[]').filter(x => x !== id);
+            b.dataset.groups = JSON.stringify(ids);
+        });
+        renderGroups(false);
+        setGroupStatus('Deleted', '#2e7d32');
+    } catch (err) {
+        setGroupStatus('Connection error', '#c8392b');
+    }
+}
+
+async function submitGroupAssignments() {
+    if (!selectedDriverId) return;
+    const ids = [...document.querySelectorAll('.group-assign-cb:checked')].map(cb => Number(cb.value));
+    const btn = document.getElementById('group-save-btn');
+    btn.textContent = '...';
+    try {
+        const { ok, data } = await postJSON('/drivers/save_groups', { driver_id: selectedDriverId, group_ids: ids });
+        if (ok) {
+            driverBtn(selectedDriverId).dataset.groups = JSON.stringify(data.group_ids);
+            renderGroups(true);
+            setGroupStatus('Groups saved ✓', '#2e7d32');
+        } else {
+            setGroupStatus(data.message || 'Error saving groups', '#c8392b');
+        }
+    } catch (err) {
+        setGroupStatus('Connection error', '#c8392b');
+    } finally {
+        btn.textContent = 'UPDATE GROUPS';
+    }
+}
 
 function applyFilters() {
     const search = document.getElementById('driver-search').value.toLowerCase().trim();
@@ -205,6 +404,7 @@ function setDriverFilter(filter, btn) {
 
 document.addEventListener('DOMContentLoaded', () => {
     setDriverFilter('active', document.getElementById('toggle-active'));
+    renderGroups(true);
 });
 
 function createNewDriver() {
@@ -216,6 +416,7 @@ function createNewDriver() {
     document.getElementById('editor-title').textContent = 'Create New Profile';
     document.getElementById('location-assignment-card').style.display = 'none';
     document.getElementById('save-status-msg').textContent = '';
+    renderGroups(true);
 }
 
 function editDriverFromBtn(btn) {
@@ -262,6 +463,9 @@ function editDriver(driver, assignedGuids) {
     document.querySelectorAll('.store-assign-cb').forEach(cb => {
         cb.checked = assignedGuids.includes(cb.value);
     });
+
+    // Sync the group checkboxes to this driver's saved groups
+    renderGroups(true);
 }
 
 async function submitDriverForm(e) {

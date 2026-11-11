@@ -200,6 +200,7 @@
     </div>
     <div class="print-meta">
         {{ start_date }} — {{ end_date }}<br>
+        {% if driver_filter_label %}Drivers: {{ driver_filter_label }}<br>{% endif %}
         Printed: {{ now }}
     </div>
 </div>

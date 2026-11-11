@@ -168,6 +168,9 @@
                     <button class="attach-btn {% if order.order_guid in has_attachments %}has-files{% endif %} {% if order.order_guid in unread_notifications %}has-notification{% endif %}"
                             onclick="openAttachments('{{ order.order_guid }}')"
                             title="Attachments">📎</button>
+                        <button class="review-btn"
+                                onclick="openAttachments('{{ order.order_guid }}', 'post')"
+                                title="Post-order review">📝</button>
                 </td>
                 <td class="col-actions">
                     <button class="save-btn" onclick="saveDriver(this)" title="Save driver">✓</button>
@@ -372,7 +375,7 @@ document.addEventListener('DOMContentLoaded', () => {
 <div id="attach-modal-overlay" class="map-overlay" style="display:none;" onclick="closeAttachments(event)">
     <div class="map-modal" style="max-width:720px;" onclick="event.stopPropagation(); document.querySelectorAll('.attach-print-popover').forEach(p=>p.remove())">
         <div class="attach-modal-header">
-            <span class="attach-modal-title">📎 Attachments</span>
+            <span class="attach-modal-title" id="attach-modal-title">📎 Attachments</span>
             <button class="map-close-btn" onclick="closeAttachments()">✕</button>
         </div>
         <div class="attach-file-list" id="attach-file-list">
@@ -387,36 +390,53 @@ document.addEventListener('DOMContentLoaded', () => {
 
 <script>
 let currentAttachOrderGuid = null;
+let currentAttachKind = 'pre';   // 'pre' = attachments, 'post' = post-order review
+
+// Everything that differs between the two document sets
+const ATTACH_KINDS = {
+    pre:  { title: '📎 Attachments',       accept: '.pdf',
+            empty: 'No files attached to this order.',
+            action: 'PRINT', tracksPrints: true },
+    post: { title: '📝 Post-Order Review', accept: '.pdf,.jpg,.jpeg,.png',
+            empty: 'No post-order review documents yet.',
+            action: 'OPEN',  tracksPrints: false },
+};
 const CAN_ADMIN_ATTACH = {{ ('true' if 'admin' in user.roles or 'catering' in user.roles else 'false') }};
 
-async function openAttachments(orderGuid) {
+async function openAttachments(orderGuid, kind = 'pre') {
     currentAttachOrderGuid = orderGuid;
+    currentAttachKind      = kind;
+    document.getElementById('attach-modal-title').textContent = ATTACH_KINDS[kind].title;
+    document.getElementById('attach-file-input').accept       = ATTACH_KINDS[kind].accept;
     const overlay = document.getElementById('attach-modal-overlay');
     overlay.style.display = 'flex';
     document.getElementById('attach-file-list').innerHTML = '<div class="attach-empty">Loading...</div>';
     document.getElementById('attach-upload-area').style.display = CAN_ADMIN_ATTACH ? 'flex' : 'none';
 
-    // Mark as seen
-    fetch(`/notifications/${orderGuid}/seen`, {method: 'POST'});
+    if (kind === 'pre') {
+        // Mark as seen
+        fetch(`/notifications/${orderGuid}/seen`, {method: 'POST'});
 
-    // Remove notification dot from button
-    document.querySelectorAll(`.attach-btn`).forEach(btn => {
-        if (btn.closest('tr') && btn.closest('tr').dataset.guid === orderGuid) {
-            btn.classList.remove('has-notification');
-        }
-    });
+        // Remove notification dot from button
+        document.querySelectorAll(`.attach-btn`).forEach(btn => {
+            if (btn.closest('tr') && btn.closest('tr').dataset.guid === orderGuid) {
+                btn.classList.remove('has-notification');
+            }
+        });
+    }
 
     await loadAttachments(orderGuid);
 }
 
 async function loadAttachments(orderGuid) {
     try {
-        const resp = await fetch(`/attachments/${orderGuid}`);
+        const cfg  = ATTACH_KINDS[currentAttachKind];
+        const resp = await fetch(`/attachments/${orderGuid}?kind=${currentAttachKind}`);
         const data = await resp.json();
         const list = document.getElementById('attach-file-list');
 
         if (!data.attachments || data.attachments.length === 0) {
-            list.innerHTML = '<div class="attach-empty">No files attached to this order.</div>';
+            list.innerHTML = `<div class="attach-empty">${cfg.empty}</div>`;
             return;
         }
 
@@ -427,7 +447,7 @@ async function loadAttachments(orderGuid) {
                     <div class="attach-file-meta">Uploaded by ${a.uploaded_by} · ${a.uploaded_at}</div>
                 </div>
                 <div class="attach-printed-slot">
-                    ${a.printed_log && a.printed_log.length > 0 ? `
+                    ${cfg.tracksPrints && a.printed_log && a.printed_log.length > 0 ? `
                     <span class="attach-printed-badge"
                           title="Printed by ${a.printed_log.length} user(s)"
                           data-printed-log="${encodeURIComponent(JSON.stringify(a.printed_log))}">✓</span>
@@ -438,8 +458,8 @@ async function loadAttachments(orderGuid) {
                        target="_blank"
                        class="filter-btn filter-btn--ghost"
                        style="font-size:10px;padding:4px 10px;text-decoration:none;"
-                       onclick="recordPrint(${a.id}, '${currentAttachOrderGuid}')">
-                       PRINT
+                       ${cfg.tracksPrints ? `onclick="recordPrint(${a.id}, '${currentAttachOrderGuid}')"` : ''}>
+                       ${cfg.action}
                     </a>
                     ${CAN_ADMIN_ATTACH ? `
                     <button class="filter-btn" style="font-size:10px;padding:4px 10px;background:#c8392b;border-color:#c8392b;"
@@ -470,6 +490,11 @@ async function uploadAttachment() {
 
     const file    = input.files[0];
     const maxSize = 25 * 1024 * 1024;
+    const okExts  = ATTACH_KINDS[currentAttachKind].accept.split(',');
+    if (!okExts.some(ext => file.name.toLowerCase().endsWith(ext))) {
+        alert('Allowed file types: ' + okExts.join(', '));
+        return;
+    }
     if (file.size > maxSize) {
         alert('File exceeds 25MB limit.');
         return;
@@ -482,7 +507,7 @@ async function uploadAttachment() {
     btn.disabled    = true;
 
     try {
-        const resp = await fetch(`/attachments/${currentAttachOrderGuid}/upload`, {
+        const resp = await fetch(`/attachments/${currentAttachOrderGuid}/upload?kind=${currentAttachKind}`, {
             method: 'POST', body: formData
         });
         const data = await resp.json();
@@ -490,10 +515,12 @@ async function uploadAttachment() {
             input.value = '';
             btn.textContent = 'UPLOAD';
             btn.disabled    = false;
-            document.querySelectorAll('.attach-btn').forEach(b => {
-                if (b.closest('tr') && b.closest('tr').dataset.guid === currentAttachOrderGuid)
-                    b.classList.add('has-files');
-            });
+            if (currentAttachKind === 'pre') {   // the green dot is for pre-order files only
+                document.querySelectorAll('.attach-btn').forEach(b => {
+                    if (b.closest('tr') && b.closest('tr').dataset.guid === currentAttachOrderGuid)
+                        b.classList.add('has-files');
+                });
+            }
             await loadAttachments(currentAttachOrderGuid);
         } else {
             alert(data.message || 'Upload failed.');

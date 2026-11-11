@@ -594,6 +594,14 @@ body {
 .do-item input[type=checkbox] { cursor: pointer; flex-shrink: 0; }
 .do-item label { cursor: pointer; flex: 1; }
 .do-divider { height: 1px; background: var(--rule); margin: 2px 0; }
+.do-heading {
+    padding: 6px 12px 2px;
+    font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.1em;
+    color: var(--ink-light);
+}
+.do-meta { color: var(--ink-light); font-size: 11px; }
+/* Driver list can be long: scroll inside the panel */
+#drv-panel { max-height: 340px; overflow-y: auto; }
 
 /* ── Header logo ───────────────────────────────────────────────────────────── */
 .header-logo {
@@ -800,14 +808,14 @@ body {
     }
 }
 /* ── Attachment button & notification dot ────────────────────────────────── */
-.col-attach { width: 32px; text-align: center; }
+.col-attach { width: 64px; text-align: center; white-space: nowrap; }
 
-.attach-btn {
+.attach-btn, .review-btn {
     background: none; border: none; cursor: pointer;
     font-size: 14px; padding: 2px 4px; border-radius: 4px;
     position: relative; transition: background 0.12s;
 }
-.attach-btn:hover { background: #f0f0f0; }
+.attach-btn:hover, .review-btn:hover { background: #f0f0f0; }
 
 .attach-btn.has-notification::after {
     content: '';

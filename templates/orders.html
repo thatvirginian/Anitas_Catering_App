@@ -26,7 +26,7 @@
 {# ── Filter Bar ─────────────────────────────────────────────────────────────── #}
 <div class="filter-bar">
     <a id="print-link"
-           href="/schedule/print?start={{ start_date }}&end={{ end_date }}&route=both{% for g in dining_option_guids %}&dining_option={{ g }}{% endfor %}"
+           href="/schedule/print?start={{ start_date }}&end={{ end_date }}&route=both{% for g in dining_option_guids %}&dining_option={{ g }}{% endfor %}{% for n in selected_drivers %}&driver={{ n | urlencode }}{% endfor %}{% for gid in selected_groups %}&group={{ gid }}{% endfor %}"
            class="filter-btn filter-btn--ghost" target="_blank">PRINT VIEW</a>
     <form class="filter-form" method="GET" action="/schedule">
         <div class="filter-group">
@@ -63,6 +63,54 @@
                            id="do-opt-{{ loop.index }}"
                            {% if opt.guid in dining_option_guids %}checked{% endif %}>
                     <label for="do-opt-{{ loop.index }}">{{ opt.name }}</label>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        {# ── Driver / driver-group filter (multi-select) ───────────────────────── #}
+        <div class="filter-group do-wrapper" id="drv-wrapper">
+            <label class="filter-label">DRIVER</label>
+            <div class="do-trigger" id="drv-trigger" onclick="toggleDrvPanel(event)">
+                <span class="do-trigger-text" id="drv-label">All drivers</span>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span class="do-badge" id="drv-count"></span>
+                    <span style="font-size:10px;color:var(--ink-light);">&#9660;</span>
+                </div>
+            </div>
+            <div class="do-panel" id="drv-panel" style="display:none;">
+                <div class="do-item" onclick="toggleDrvAll(event)">
+                    <input type="checkbox" id="drv-opt-all">
+                    <span>All drivers</span>
+                </div>
+
+                {% if driver_groups %}
+                <div class="do-divider"></div>
+                <div class="do-heading">GROUPS</div>
+                {% for grp in driver_groups %}
+                <div class="do-item" onclick="toggleDrvOpt(event)">
+                    <input type="checkbox" name="group" value="{{ grp.id }}"
+                           data-label="{{ grp.name }}"
+                           {% if grp.id|string in selected_groups %}checked{% endif %}>
+                    <span>{{ grp.name }} <span class="do-meta">({{ grp.member_count }})</span></span>
+                </div>
+                {% endfor %}
+                {% endif %}
+
+                <div class="do-divider"></div>
+                <div class="do-heading">DRIVERS</div>
+                <div class="do-item" onclick="toggleDrvOpt(event)">
+                    <input type="checkbox" name="driver" value="__none__"
+                           data-label="No driver assigned"
+                           {% if '__none__' in selected_drivers %}checked{% endif %}>
+                    <span><em>No driver assigned</em></span>
+                </div>
+                {% for d in driver_options %}
+                <div class="do-item" onclick="toggleDrvOpt(event)">
+                    <input type="checkbox" name="driver" value="{{ d.name }}"
+                           data-label="{{ d.name }}"
+                           {% if d.name in selected_drivers %}checked{% endif %}>
+                    <span>{{ d.name }}{% if not d.active %} <span class="do-meta">(inactive)</span>{% endif %}</span>
                 </div>
                 {% endfor %}
             </div>
@@ -204,6 +252,9 @@
                         <button class="attach-btn {% if order.order_guid in has_attachments %}has-files{% endif %} {% if order.order_guid in unread_notifications %}has-notification{% endif %} {% if order.order_guid in all_printed %}has-printed{% endif %}"
                                 onclick="openAttachments('{{ order.order_guid }}')"
                                 title="Attachments">📎</button>
+                        <button class="review-btn"
+                                onclick="openAttachments('{{ order.order_guid }}', 'post')"
+                                title="Post-order review">📝</button>
                     </td>
                     <td class="col-actions">
                         <button class="save-btn" onclick="saveRow(this)" title="Save">
@@ -434,6 +485,8 @@ function updateDOLabel() {
 
 function toggleDOPanel(e) {
     e.stopPropagation();
+    const drvPanel = document.getElementById('drv-panel');   // only one panel open at a time
+    if (drvPanel) drvPanel.style.display = 'none';
     const panel = document.getElementById('do-panel');
     panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
 }
@@ -465,13 +518,72 @@ document.addEventListener('click', e => {
 
 // Set initial label on page load
 document.addEventListener('DOMContentLoaded', updateDOLabel);
+
+// ── Driver / group filter ─────────────────────────────────────────────────────
+function drvChecks() {
+    // Group and driver checkboxes (everything with a name; "All" has none)
+    return [...document.querySelectorAll('#drv-panel input[type=checkbox][name]')];
+}
+
+function updateDrvLabel() {
+    const checked = drvChecks().filter(c => c.checked);
+    const label   = document.getElementById('drv-label');
+    const badge   = document.getElementById('drv-count');
+    const allCb   = document.getElementById('drv-opt-all');
+
+    if (checked.length === 0) {
+        label.textContent   = 'All drivers';
+        badge.textContent   = '';
+        badge.style.display = 'none';
+        allCb.checked       = true;
+    } else {
+        label.textContent   = checked[0].dataset.label;
+        allCb.checked       = false;
+        if (checked.length > 1) {
+            badge.textContent   = checked.length;
+            badge.style.display = 'inline-flex';
+        } else {
+            badge.textContent   = '';
+            badge.style.display = 'none';
+        }
+    }
+}
+
+function toggleDrvPanel(e) {
+    e.stopPropagation();
+    const doPanel = document.getElementById('do-panel');     // only one panel open at a time
+    if (doPanel) doPanel.style.display = 'none';
+    const panel = document.getElementById('drv-panel');
+    panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+}
+
+function toggleDrvOpt(e) {
+    const cb = e.currentTarget.querySelector('input[type=checkbox]');
+    if (e.target !== cb) cb.checked = !cb.checked;
+    updateDrvLabel();
+}
+
+function toggleDrvAll(e) {
+    // "All drivers" just clears every selection
+    drvChecks().forEach(c => c.checked = false);
+    updateDrvLabel();
+}
+
+document.addEventListener('click', e => {
+    const wrapper = document.getElementById('drv-wrapper');
+    if (wrapper && !wrapper.contains(e.target)) {
+        document.getElementById('drv-panel').style.display = 'none';
+    }
+});
+
+document.addEventListener('DOMContentLoaded', updateDrvLabel);
 </script>
 
 <!-- ── Attachment Modal ──────────────────────────────────────────────────── -->
 <div id="attach-modal-overlay" class="map-overlay" style="display:none;" onclick="closeAttachments(event)">
     <div class="map-modal" style="max-width:720px;" onclick="event.stopPropagation(); document.querySelectorAll('.attach-print-popover').forEach(p=>p.remove())">
         <div class="attach-modal-header">
-            <span class="attach-modal-title">📎 Attachments</span>
+            <span class="attach-modal-title" id="attach-modal-title">📎 Attachments</span>
             <button class="map-close-btn" onclick="closeAttachments()">✕</button>
         </div>
         <div class="attach-file-list" id="attach-file-list">
@@ -486,36 +598,53 @@ document.addEventListener('DOMContentLoaded', updateDOLabel);
 
 <script>
 let currentAttachOrderGuid = null;
+let currentAttachKind = 'pre';   // 'pre' = attachments, 'post' = post-order review
+
+// Everything that differs between the two document sets
+const ATTACH_KINDS = {
+    pre:  { title: '📎 Attachments',       accept: '.pdf',
+            empty: 'No files attached to this order.',
+            action: 'PRINT', tracksPrints: true },
+    post: { title: '📝 Post-Order Review', accept: '.pdf,.jpg,.jpeg,.png',
+            empty: 'No post-order review documents yet.',
+            action: 'OPEN',  tracksPrints: false },
+};
 const CAN_ADMIN_ATTACH = document.getElementById('app-config').dataset.canAdmin === 'true';
 
-async function openAttachments(orderGuid) {
+async function openAttachments(orderGuid, kind = 'pre') {
     currentAttachOrderGuid = orderGuid;
+    currentAttachKind      = kind;
+    document.getElementById('attach-modal-title').textContent = ATTACH_KINDS[kind].title;
+    document.getElementById('attach-file-input').accept       = ATTACH_KINDS[kind].accept;
     const overlay = document.getElementById('attach-modal-overlay');
     overlay.style.display = 'flex';
     document.getElementById('attach-file-list').innerHTML = '<div class="attach-empty">Loading...</div>';
     document.getElementById('attach-upload-area').style.display = CAN_ADMIN_ATTACH ? 'flex' : 'none';
 
-    // Mark as seen
-    fetch(`/notifications/${orderGuid}/seen`, {method: 'POST'});
+    if (kind === 'pre') {
+        // Mark as seen
+        fetch(`/notifications/${orderGuid}/seen`, {method: 'POST'});
 
-    // Remove notification dot from button
-    document.querySelectorAll(`.attach-btn`).forEach(btn => {
-        if (btn.closest('tr') && btn.closest('tr').dataset.guid === orderGuid) {
-            btn.classList.remove('has-notification');
-        }
-    });
+        // Remove notification dot from button
+        document.querySelectorAll(`.attach-btn`).forEach(btn => {
+            if (btn.closest('tr') && btn.closest('tr').dataset.guid === orderGuid) {
+                btn.classList.remove('has-notification');
+            }
+        });
+    }
 
     await loadAttachments(orderGuid);
 }
 
 async function loadAttachments(orderGuid) {
     try {
-        const resp = await fetch(`/attachments/${orderGuid}`);
+        const cfg  = ATTACH_KINDS[currentAttachKind];
+        const resp = await fetch(`/attachments/${orderGuid}?kind=${currentAttachKind}`);
         const data = await resp.json();
         const list = document.getElementById('attach-file-list');
 
         if (!data.attachments || data.attachments.length === 0) {
-            list.innerHTML = '<div class="attach-empty">No files attached to this order.</div>';
+            list.innerHTML = `<div class="attach-empty">${cfg.empty}</div>`;
             return;
         }
 
@@ -526,7 +655,7 @@ async function loadAttachments(orderGuid) {
                     <div class="attach-file-meta">Uploaded by ${a.uploaded_by} · ${a.uploaded_at}</div>
                 </div>
                 <div class="attach-printed-slot">
-                    ${a.printed_log && a.printed_log.length > 0 ? `
+                    ${cfg.tracksPrints && a.printed_log && a.printed_log.length > 0 ? `
                     <span class="attach-printed-badge"
                           title="Printed by ${a.printed_log.length} user(s)"
                           data-printed-log="${encodeURIComponent(JSON.stringify(a.printed_log))}">✓</span>
@@ -537,8 +666,8 @@ async function loadAttachments(orderGuid) {
                        target="_blank"
                        class="filter-btn filter-btn--ghost"
                        style="font-size:10px;padding:4px 10px;text-decoration:none;"
-                       onclick="recordPrint(${a.id}, '${currentAttachOrderGuid}')">
-                       PRINT
+                       ${cfg.tracksPrints ? `onclick="recordPrint(${a.id}, '${currentAttachOrderGuid}')"` : ''}>
+                       ${cfg.action}
                     </a>
                     ${CAN_ADMIN_ATTACH ? `
                     <button class="filter-btn" style="font-size:10px;padding:4px 10px;background:#c8392b;border-color:#c8392b;"
@@ -569,6 +698,11 @@ async function uploadAttachment() {
 
     const file    = input.files[0];
     const maxSize = 25 * 1024 * 1024;
+    const okExts  = ATTACH_KINDS[currentAttachKind].accept.split(',');
+    if (!okExts.some(ext => file.name.toLowerCase().endsWith(ext))) {
+        alert('Allowed file types: ' + okExts.join(', '));
+        return;
+    }
     if (file.size > maxSize) {
         alert('File exceeds 25MB limit.');
         return;
@@ -581,7 +715,7 @@ async function uploadAttachment() {
     btn.disabled    = true;
 
     try {
-        const resp = await fetch(`/attachments/${currentAttachOrderGuid}/upload`, {
+        const resp = await fetch(`/attachments/${currentAttachOrderGuid}/upload?kind=${currentAttachKind}`, {
             method: 'POST', body: formData
         });
         const data = await resp.json();
@@ -589,10 +723,12 @@ async function uploadAttachment() {
             input.value = '';
             btn.textContent = 'UPLOAD';
             btn.disabled    = false;
-            document.querySelectorAll('.attach-btn').forEach(b => {
-                if (b.closest('tr') && b.closest('tr').dataset.guid === currentAttachOrderGuid)
-                    b.classList.add('has-files');
-            });
+            if (currentAttachKind === 'pre') {   // the green dot is for pre-order files only
+                document.querySelectorAll('.attach-btn').forEach(b => {
+                    if (b.closest('tr') && b.closest('tr').dataset.guid === currentAttachOrderGuid)
+                        b.classList.add('has-files');
+                });
+            }
             await loadAttachments(currentAttachOrderGuid);
         } else {
             alert(data.message || 'Upload failed.');

@@ -59,7 +59,7 @@ def load_user():
 
     if not user_id:
         # Local dev — no EasyAuth headers present
-        g.user = {"user_id": "dev", "username": "arlington@anitascorp.com", "roles": ["store"], "is_admin": True}
+        g.user = {"user_id": "dev", "username": "dev@local", "roles": ["admin"], "is_admin": True}
         return
 
     roles = []
@@ -336,6 +336,108 @@ def _get_drivers_by_location():
         result[loc].append("No Driver!")
     return result
 
+
+# ── Driver filter (overview page) ─────────────────────────────────────────────
+# Orders store the driver as TEXT (nickname, else full name) in
+# catering_details.driver_assigned, so the filter matches on that name.
+# A selected group expands to the display names of all of its members.
+
+NO_DRIVER_FILTER = "__none__"   # filter value meaning "no driver assigned"
+
+
+def _get_driver_filter_options():
+    """Every driver for the filter dropdown, active first: [{name, active}]."""
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT COALESCE(NULLIF(nickname, ''), full_name) AS display_name, active
+            FROM catering_drivers
+            ORDER BY active DESC, LOWER(COALESCE(NULLIF(nickname, ''), full_name))
+        """)).mappings().all()
+
+    seen, options = set(), []
+    for r in rows:
+        key = r["display_name"].lower()
+        if key in seen:           # two drivers sharing a display name match the same orders
+            continue
+        seen.add(key)
+        options.append({"name": r["display_name"], "active": bool(r["active"])})
+    return options
+
+
+def _get_driver_groups():
+    """All driver groups with member counts: [{id, name, member_count}]."""
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT g.id, g.name, COUNT(m.driver_id) AS member_count
+            FROM catering_driver_groups g
+            LEFT JOIN catering_driver_group_members m ON m.group_id = g.id
+            GROUP BY g.id, g.name
+            ORDER BY LOWER(g.name)
+        """)).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def _parse_driver_filter():
+    """Read ?driver=...&group=... from the request. Returns (names, group_ids)."""
+    names = [n.strip() for n in request.args.getlist("driver") if n and n.strip()]
+    group_ids = []
+    for v in request.args.getlist("group"):
+        try:
+            group_ids.append(int(v))
+        except (TypeError, ValueError):
+            pass                  # ignore junk instead of failing the page
+    return names, group_ids
+
+
+def _resolve_driver_filter(names, group_ids):
+    """
+    Collapse the raw selections into what the orders query needs:
+        (driver_names_lowercase, include_unassigned, filter_active)
+    Group members are included whether or not they're still active, so older
+    orders worked by a since-deactivated driver still show under their group.
+    """
+    filter_active      = bool(names or group_ids)
+    include_unassigned = NO_DRIVER_FILTER in names
+    resolved           = {n.lower() for n in names if n != NO_DRIVER_FILTER}
+
+    if group_ids:
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT DISTINCT COALESCE(NULLIF(cd.nickname, ''), cd.full_name) AS display_name
+                FROM catering_driver_group_members m
+                JOIN catering_drivers cd ON cd.id = m.driver_id
+                WHERE m.group_id = ANY(:gids)
+            """), {"gids": group_ids}).mappings().all()
+        resolved.update(r["display_name"].lower() for r in rows)
+
+    return sorted(resolved), include_unassigned, filter_active
+
+
+def _driver_filter_sql(driver_filter, params):
+    """
+    SQL fragment (and params) for the resolved driver filter, or "" when no
+    filter is set. A filter that resolves to nobody (e.g. an empty group)
+    returns no orders rather than silently showing everything.
+    """
+    if not driver_filter:
+        return ""
+    driver_names, include_unassigned, filter_active = driver_filter
+    if not filter_active:
+        return ""
+
+    clauses = []
+    if driver_names:
+        clauses.append("LOWER(TRIM(cd.driver_assigned)) = ANY(:driver_names)")
+        params["driver_names"] = driver_names
+    if include_unassigned:
+        clauses.append("(cd.driver_assigned IS NULL "
+                       "OR TRIM(cd.driver_assigned) = '' "
+                       "OR LOWER(TRIM(cd.driver_assigned)) = 'no driver!')")
+    if not clauses:
+        return "AND FALSE"
+    return "AND (" + " OR ".join(clauses) + ")"
+
+
 def _get_store_orders(start_date, end_date, location_guids=None, dining_option_guids=None):
     """
     Same as _get_orders but filtered by location(s) and without route grouping.
@@ -445,18 +547,20 @@ def _get_store_orders(start_date, end_date, location_guids=None, dining_option_g
 
 
 
-def _get_orders(start_date, end_date, dining_option_guids=None):
+def _get_orders(start_date, end_date, dining_option_guids=None, driver_filter=None):
     """
     Pull all catering orders in the date range, joined to location and
     catering_details. Returns rows grouped as:
         { route: { location_name: {"orders": [...], "location_total": "$x,xxx.xx"} } }
     Optional dining_option_guids (list) filters to specific dining options.
+    Optional driver_filter is the tuple from _resolve_driver_filter().
     """
     dining_filter = ""
     params = {"start_date": start_date, "end_date": end_date}
     if dining_option_guids:
         dining_filter = "AND oh.dining_option_guid::text = ANY(:dining_option_guids)"
         params["dining_option_guids"] = dining_option_guids
+    driver_sql = _driver_filter_sql(driver_filter, params)
 
     sql = text(f"""
         SELECT
@@ -516,6 +620,7 @@ def _get_orders(start_date, end_date, dining_option_guids=None):
           AND (oh.estimated_fulfillment_date AT TIME ZONE l.timezone)::date
               BETWEEN :start_date AND :end_date
           {dining_filter}
+          {driver_sql}
         ORDER BY
             l.route DESC,
             l.location_name,
@@ -614,7 +719,10 @@ def index():
     if "" in selected_guids:
         selected_guids = []
 
-    grouped = _get_orders(start_date, end_date, selected_guids or None)
+    selected_drivers, selected_group_ids = _parse_driver_filter()
+    driver_filter = _resolve_driver_filter(selected_drivers, selected_group_ids)
+
+    grouped = _get_orders(start_date, end_date, selected_guids or None, driver_filter)
     totals  = _get_route_totals(grouped)
 
     # Collect all order guids for notification check
@@ -642,6 +750,10 @@ def index():
         unread_notifications = unread,
         has_attachments      = has_attachments,
         all_printed          = all_printed,
+        driver_options       = _get_driver_filter_options(),
+        driver_groups        = _get_driver_groups(),
+        selected_drivers     = selected_drivers,
+        selected_groups      = [str(i) for i in selected_group_ids],
     )
 
 
@@ -770,7 +882,10 @@ def print_view():
         start_date = date.today()
         end_date   = date.today() + timedelta(days=7)
 
-    grouped = _get_orders(start_date, end_date, selected_guids or None)
+    selected_drivers, selected_group_ids = _parse_driver_filter()
+    driver_filter = _resolve_driver_filter(selected_drivers, selected_group_ids)
+
+    grouped = _get_orders(start_date, end_date, selected_guids or None, driver_filter)
 
     if route_filter != "both":
         grouped = {
@@ -783,6 +898,17 @@ def print_view():
     eastern = pytz.timezone("America/New_York")
     now_et  = datetime.now(pytz.utc).astimezone(eastern).strftime("%m/%d/%Y %I:%M %p ET")
 
+    # Human-readable description of the driver filter, shown in the print header
+    driver_label_parts = []
+    if selected_group_ids:
+        with engine.connect() as conn:
+            group_names = conn.execute(text(
+                "SELECT name FROM catering_driver_groups WHERE id = ANY(:ids) ORDER BY LOWER(name)"
+            ), {"ids": selected_group_ids}).scalars().all()
+        driver_label_parts += [f"{n} (group)" for n in group_names]
+    driver_label_parts += ["No driver assigned" if n == NO_DRIVER_FILTER else n
+                           for n in selected_drivers]
+
     return render_template(
         "print.html",
         grouped             = grouped,
@@ -792,6 +918,7 @@ def print_view():
         now                 = now_et,
         route_filter        = route_filter,
         dining_option_guids = selected_guids,
+        driver_filter_label = ", ".join(driver_label_parts),
     )
 
 
@@ -1066,19 +1193,34 @@ def manage_drivers():
 
         # 3. Fetch all current driver-location assignments
         assignment_rows = conn.execute(text("""
-            SELECT driver_id, store_guid::text AS store_guid 
+            SELECT driver_id, store_guid::text AS store_guid
             FROM catering_driver_locations
+        """)).mappings().all()
+
+        # 4. Driver groups and which drivers belong to which
+        group_rows = conn.execute(text("""
+            SELECT id, name FROM catering_driver_groups ORDER BY LOWER(name)
+        """)).mappings().all()
+        membership_rows = conn.execute(text("""
+            SELECT driver_id, group_id FROM catering_driver_group_members
         """)).mappings().all()
 
     assignments = {}
     for row in assignment_rows:
         assignments.setdefault(row["driver_id"], []).append(row["store_guid"])
 
+    groups_list   = [dict(r) for r in group_rows]
+    driver_groups = {}
+    for row in membership_rows:
+        driver_groups.setdefault(row["driver_id"], []).append(row["group_id"])
+
     return render_template(
         "drivers.html",
         drivers=drivers_list,  # Pass the serializable list of plain dicts
         locations=locations_list,
-        assignments=assignments
+        assignments=assignments,
+        groups=groups_list,
+        driver_groups=driver_groups,
     )
 
 
@@ -1174,6 +1316,95 @@ def save_driver_locations():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@app.route("/drivers/groups/save", methods=["POST"])
+@role_required("admin","catering")
+def save_driver_group():
+    """Create a driver group, or rename one when an id is supplied."""
+    data     = request.get_json(force=True)
+    name     = (data.get("name") or "").strip()
+    group_id = data.get("id")
+
+    if not name:
+        return jsonify({"status": "error", "message": "Group name is required."}), 400
+    if len(name) > 60:
+        return jsonify({"status": "error", "message": "Group name is too long (60 max)."}), 400
+
+    try:
+        with engine.begin() as conn:
+            if group_id:
+                group_id  = int(group_id)
+                duplicate = conn.execute(text("""
+                    SELECT 1 FROM catering_driver_groups
+                    WHERE LOWER(name) = LOWER(:name) AND id <> :id
+                """), {"name": name, "id": group_id}).first()
+                if not duplicate:
+                    conn.execute(text("UPDATE catering_driver_groups SET name = :name WHERE id = :id"),
+                                 {"name": name, "id": group_id})
+            else:
+                duplicate = conn.execute(text("""
+                    SELECT 1 FROM catering_driver_groups WHERE LOWER(name) = LOWER(:name)
+                """), {"name": name}).first()
+                if not duplicate:
+                    group_id = conn.execute(text("""
+                        INSERT INTO catering_driver_groups (name) VALUES (:name) RETURNING id
+                    """), {"name": name}).scalar()
+        if duplicate:
+            return jsonify({"status": "error",
+                            "message": f'A group named "{name}" already exists.'}), 409
+        return jsonify({"status": "ok", "id": group_id, "name": name})
+    except Exception as e:
+        logger.error(f"Failed to save driver group: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/drivers/groups/delete", methods=["POST"])
+@role_required("admin","catering")
+def delete_driver_group():
+    """Delete a group. Drivers are untouched; they just lose the membership."""
+    data     = request.get_json(force=True)
+    group_id = data.get("id")
+    if not group_id:
+        return jsonify({"status": "error", "message": "Missing id"}), 400
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM catering_driver_groups WHERE id = :id"),
+                         {"id": int(group_id)})
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        logger.error(f"Failed to delete driver group: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/drivers/save_groups", methods=["POST"])
+@role_required("admin","catering")
+def save_driver_groups():
+    """Replace the set of groups a driver belongs to."""
+    data      = request.get_json(force=True)
+    driver_id = data.get("driver_id")
+    if not driver_id:
+        return jsonify({"status": "error", "message": "Missing driver_id"}), 400
+
+    try:
+        group_ids = [int(g) for g in (data.get("group_ids") or [])]
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "Invalid group ids"}), 400
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM catering_driver_group_members WHERE driver_id = :d"),
+                         {"d": int(driver_id)})
+            # Selecting from the groups table skips any group deleted in another tab
+            saved = conn.execute(text("""
+                INSERT INTO catering_driver_group_members (driver_id, group_id)
+                SELECT :d, id FROM catering_driver_groups WHERE id = ANY(:gids)
+                RETURNING group_id
+            """), {"d": int(driver_id), "gids": group_ids}).scalars().all()
+        return jsonify({"status": "ok", "group_ids": sorted(saved)})
+    except Exception as e:
+        logger.error(f"Failed to save driver groups: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @app.route("/drivers/print")
 @role_required("admin","catering")
 def print_drivers():
@@ -1246,9 +1477,10 @@ def _get_graph_token():
     return _sp_token_cache["token"]
 
 
-def _sp_upload(order_guid, filename, file_bytes):
+def _sp_upload(order_guid, filename, file_bytes, kind="pre"):
     """
     Upload a file to SharePoint under Catering Attachments/{order_guid}/filename.
+    Post-order review documents go in a post-review/ subfolder of the same order folder.
     Uses a unique prefix on the SharePoint filename to prevent path collisions.
     Returns the Graph API item ID.
     """
@@ -1259,7 +1491,8 @@ def _sp_upload(order_guid, filename, file_bytes):
     # Unique name in SharePoint to prevent cross-order collisions
     unique_prefix = uuid.uuid4().hex[:8]
     sp_name       = f"{unique_prefix}_{filename}"
-    path          = f"Catering Attachments/{order_guid}/{sp_name}"
+    subfolder     = "post-review/" if kind == "post" else ""
+    path          = f"Catering Attachments/{order_guid}/{subfolder}{sp_name}"
     url           = f"https://graph.microsoft.com/v1.0/drives/{SP_DRIVE_ID}/root:/{path}:/content"
 
     resp = http_requests.put(url, headers=headers, data=file_bytes)
@@ -1299,18 +1532,72 @@ def _sp_delete(sharepoint_id):
     resp.raise_for_status()
 
 
+# ── Attachment kinds ──────────────────────────────────────────────────────────
+# order_attachments.kind:
+#   'pre'  = documents attached before the order (the original feature)
+#   'post' = post-order review documents
+# Counts, dots, print tracking and notifications are all 'pre'-only.
+
+ATTACHMENT_KINDS = ("pre", "post")
+ATTACHMENT_UPLOAD_TYPES = {
+    "pre":  {".pdf"},
+    "post": {".pdf", ".jpg", ".jpeg", ".png"},
+}
+ATTACHMENT_MIME = {
+    ".pdf":  "application/pdf",
+    ".jpg":  "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png":  "image/png",
+}
+
+
+def _attachment_kind():
+    """Read ?kind= from the request ('pre' by default); 400 on anything else."""
+    kind = (request.args.get("kind") or "pre").lower()
+    if kind not in ATTACHMENT_KINDS:
+        abort(400)
+    return kind
+
+
+def _file_matches_type(ext, data):
+    """Cheap content check so a renamed file can't pass as a PDF/JPG/PNG."""
+    if ext == ".pdf":
+        return b"%PDF" in data[:1024]
+    if ext in (".jpg", ".jpeg"):
+        return data[:3] == b"\xff\xd8\xff"
+    if ext == ".png":
+        return data[:8] == b"\x89PNG\r\n\x1a\n"
+    return False
+
+
+def _user_can_view_order(order_guid):
+    """
+    True if the current user may see this order: admin/catering/gm see everything,
+    store users only orders at their own location(s).
+    """
+    if any(r in g.user["roles"] for r in ("admin", "catering", "gm")):
+        return True
+    with engine.connect() as conn:
+        loc = conn.execute(text(
+            "SELECT location_id::text FROM orders_head WHERE order_guid = :g"
+        ), {"g": order_guid}).scalar()
+    if not loc:
+        return False
+    return loc in {l["guid"] for l in _get_store_locations_for_user(g.user)}
+
+
 # ── Attachment DB helpers ─────────────────────────────────────────────────────
 
-def _get_attachments(order_guid):
+def _get_attachments(order_guid, kind="pre"):
     with engine.connect() as conn:
         rows = conn.execute(text("""
             SELECT id, filename, uploaded_by,
                    uploaded_at AT TIME ZONE 'America/New_York' AS uploaded_at,
                    printed_log
             FROM order_attachments
-            WHERE order_guid = :order_guid
+            WHERE order_guid = :order_guid AND kind = :kind
             ORDER BY uploaded_at DESC
-        """), {"order_guid": order_guid}).mappings().all()
+        """), {"order_guid": order_guid, "kind": kind}).mappings().all()
     return [dict(r) for r in rows]
 
 
@@ -1331,14 +1618,14 @@ def _get_unread_notifications(order_guids, user_email):
 
 
 def _get_orders_with_attachments(order_guids):
-    """Returns set of order_guids that have at least one attachment."""
+    """Returns set of order_guids that have at least one pre-order attachment."""
     if not order_guids:
         return set()
     with engine.connect() as conn:
         rows = conn.execute(text("""
             SELECT DISTINCT order_guid
             FROM order_attachments
-            WHERE order_guid = ANY(:guids)
+            WHERE order_guid = ANY(:guids) AND kind = 'pre'
         """), {"guids": list(order_guids)}).mappings().all()
     return {r["order_guid"] for r in rows}
 
@@ -1355,7 +1642,7 @@ def _get_orders_printed_by_store(order_guids):
         rows = conn.execute(text("""
             SELECT order_guid
             FROM order_attachments
-            WHERE order_guid = ANY(:guids)
+            WHERE order_guid = ANY(:guids) AND kind = 'pre'
             GROUP BY order_guid
             HAVING COUNT(*) > 0
                AND COUNT(*) = COUNT(CASE WHEN jsonb_array_length(printed_log) > 0 THEN 1 END)
@@ -1391,8 +1678,11 @@ def _mark_seen(order_guid):
 @app.route("/attachments/<order_guid>")
 @role_required("admin", "catering", "gm", "store")
 def list_attachments(order_guid):
-    attachments = _get_attachments(order_guid)
-    # Serialize dates
+    kind = _attachment_kind()
+    # Review documents: a store user may only see their own location's orders
+    if kind == "post" and not _user_can_view_order(order_guid):
+        abort(403)
+    attachments = _get_attachments(order_guid, kind)
     eastern = pytz.timezone("America/New_York")
     for a in attachments:
         if a.get("uploaded_at"):
@@ -1416,6 +1706,8 @@ def list_attachments(order_guid):
 @app.route("/attachments/<order_guid>/upload", methods=["POST"])
 @role_required("admin", "catering")
 def upload_attachment(order_guid):
+    kind = _attachment_kind()
+
     if "file" not in request.files:
         return jsonify({"status": "error", "message": "No file provided"}), 400
 
@@ -1423,23 +1715,32 @@ def upload_attachment(order_guid):
     if not f.filename:
         return jsonify({"status": "error", "message": "No filename"}), 400
 
-    # Check allowed types — PDF only
-    allowed = {".pdf"}
+    # Check allowed types — PDF for pre-order; PDF/JPG/PNG for post-order reviews
+    allowed = ATTACHMENT_UPLOAD_TYPES[kind]
     ext     = os.path.splitext(f.filename)[1].lower()
     if ext not in allowed:
-        return jsonify({"status": "error", "message": "Only PDF files are allowed"}), 400
+        message = ("Only PDF files are allowed" if kind == "pre"
+                   else "Only PDF, JPG or PNG files are allowed")
+        return jsonify({"status": "error", "message": message}), 400
 
     # Check file size
     file_bytes = f.read()
     if len(file_bytes) > SP_MAX_BYTES:
         return jsonify({"status": "error", "message": "File exceeds 25MB limit"}), 400
 
-    # Check for duplicate filename on this order
+    # Review documents: confirm the contents match the extension
+    if kind == "post" and not _file_matches_type(ext, file_bytes):
+        return jsonify({
+            "status":  "error",
+            "message": f'"{f.filename}" is not a valid {ext.lstrip(".").upper()} file.'
+        }), 400
+
+    # Check for duplicate filename on this order (within the same kind)
     with engine.connect() as conn:
         existing = conn.execute(text("""
             SELECT id FROM order_attachments
-            WHERE order_guid = :order_guid AND filename = :filename
-        """), {"order_guid": order_guid, "filename": f.filename}).first()
+            WHERE order_guid = :order_guid AND filename = :filename AND kind = :kind
+        """), {"order_guid": order_guid, "filename": f.filename, "kind": kind}).first()
 
     if existing:
         return jsonify({
@@ -1448,23 +1749,25 @@ def upload_attachment(order_guid):
         }), 400
 
     try:
-        sp_id = _sp_upload(order_guid, f.filename, file_bytes)
+        sp_id = _sp_upload(order_guid, f.filename, file_bytes, kind)
     except Exception as e:
         logger.error(f"SharePoint upload failed: {e}")
         return jsonify({"status": "error", "message": "Upload to SharePoint failed"}), 500
 
     with engine.begin() as conn:
         conn.execute(text("""
-            INSERT INTO order_attachments (order_guid, filename, sharepoint_id, uploaded_by)
-            VALUES (:order_guid, :filename, :sharepoint_id, :uploaded_by)
+            INSERT INTO order_attachments (order_guid, filename, sharepoint_id, uploaded_by, kind)
+            VALUES (:order_guid, :filename, :sharepoint_id, :uploaded_by, :kind)
         """), {
             "order_guid":    order_guid,
             "filename":      f.filename,
             "sharepoint_id": sp_id,
             "uploaded_by":   g.user["username"],
+            "kind":          kind,
         })
 
-    _create_notification(order_guid, "file_attached")
+    if kind == "pre":                       # review documents raise no alerts
+        _create_notification(order_guid, "file_attached")
     return jsonify({"status": "ok"})
 
 
@@ -1473,12 +1776,16 @@ def upload_attachment(order_guid):
 def download_attachment(attachment_id):
     with engine.connect() as conn:
         row = conn.execute(text("""
-            SELECT filename, sharepoint_id
+            SELECT filename, sharepoint_id, order_guid, kind
             FROM order_attachments WHERE id = :id
         """), {"id": attachment_id}).mappings().first()
 
     if not row:
         abort(404)
+
+    # Review documents: a store user may only open their own location's files
+    if row["kind"] == "post" and not _user_can_view_order(row["order_guid"]):
+        abort(403)
 
     try:
         filename, content, mime = _sp_download(row["sharepoint_id"])
@@ -1486,10 +1793,15 @@ def download_attachment(attachment_id):
         logger.error(f"SharePoint download failed: {e}")
         abort(500)
 
+    # Serve with the type that matches the file (pre-order files are all PDFs)
+    ext = os.path.splitext(row["filename"])[1].lower()
     return Response(
         content,
-        mimetype="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{row["filename"]}"'}
+        mimetype=ATTACHMENT_MIME.get(ext, "application/pdf"),
+        headers={
+            "Content-Disposition": f'inline; filename="{row["filename"]}"',
+            "X-Content-Type-Options": "nosniff",
+        }
     )
 
 
@@ -1499,7 +1811,7 @@ def mark_attachment_printed(attachment_id):
     """Record first print per user. Only records if current user hasn't printed it before."""
     with engine.connect() as conn:
         row = conn.execute(text("""
-            SELECT oa.id, oa.printed_log, oh.location_id::text
+            SELECT oa.id, oa.printed_log, oa.kind, oh.location_id::text
             FROM order_attachments oa
             JOIN orders_head oh ON oh.order_guid = oa.order_guid
             WHERE oa.id = :id
@@ -1507,6 +1819,10 @@ def mark_attachment_printed(attachment_id):
 
     if not row:
         abort(404)
+
+    # Print tracking is a pre-order feature; review documents are never recorded
+    if row["kind"] != "pre":
+        return jsonify({"status": "ok", "recorded": False})
 
     # Look up the store's contact_email
     with engine.connect() as conn:
@@ -1546,7 +1862,7 @@ def mark_attachment_printed(attachment_id):
 def delete_attachment(attachment_id):
     with engine.connect() as conn:
         row = conn.execute(text("""
-            SELECT order_guid, sharepoint_id
+            SELECT order_guid, sharepoint_id, kind
             FROM order_attachments WHERE id = :id
         """), {"id": attachment_id}).mappings().first()
 
@@ -1564,7 +1880,8 @@ def delete_attachment(attachment_id):
             "DELETE FROM order_attachments WHERE id = :id"
         ), {"id": attachment_id})
 
-    _create_notification(row["order_guid"], "file_deleted")
+    if row["kind"] == "pre":                # review documents raise no alerts
+        _create_notification(row["order_guid"], "file_deleted")
     return jsonify({"status": "ok"})
 
 
