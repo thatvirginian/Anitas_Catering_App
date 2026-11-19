@@ -41,6 +41,30 @@
                 {% endfor %}
             </div>
         </div>
+        <div class="fbar-field fbar-field--md do-wrapper" id="do-wrapper">
+          <label class="fbar-label">SERVICE</label>
+          <div class="do-trigger" id="do-trigger" onclick="toggleDOPanel(event)">
+            <span class="do-trigger-text" id="do-label">All services</span>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span class="do-badge" id="do-count"></span>
+              <span style="font-size:10px;color:var(--ink-light);">&#9660;</span>
+            </div>
+          </div>
+          <div class="do-panel" id="do-panel" style="display:none;">
+            <div class="do-item" onclick="toggleDOAll(event)">
+              <input type="checkbox" id="do-opt-all">
+              <label>All services</label>
+            </div>
+            <div class="do-divider"></div>
+            {% for opt in dining_options %}
+            <div class="do-item" onclick="toggleDOOpt(event)">
+              <input type="checkbox" name="dining_option" value="{{ opt.guid }}" data-chip="Service" data-label="{{ opt.name }}"
+                     {% if opt.guid in selected_dining %}checked{% endif %}>
+              <label>{{ opt.name }}</label>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
         <div class="fbar-field fbar-field--md">
           <label class="fbar-label" for="f-docs">REVIEW DOCUMENTS</label>
           <select class="filter-select" id="f-docs" name="docs" data-chip="Documents" data-chip-default="any">
@@ -117,7 +141,7 @@
   {% else %}
   {# ── Results + print ── #}
   <form method="GET" action="{{ url_for('reviews_pdf') }}" target="_blank" id="rv-print"
-        data-total-orders="{{ orders|length }}" data-total-files="{{ total_files }}"
+        data-total-orders="{{ orders|length }}" data-total-review="{{ total_files }}" data-total-sent="{{ total_sent }}"
         data-max-files="{{ max_files }}">
     <input type="hidden" name="start" value="{{ start }}">
     <input type="hidden" name="end" value="{{ end }}">
@@ -128,17 +152,32 @@
     <input type="hidden" name="docs" value="{{ docs }}">
     {% for t in selected_types %}<input type="hidden" name="client_type" value="{{ t }}">{% endfor %}
     {% for g in selected_locations %}<input type="hidden" name="location" value="{{ g }}">{% endfor %}
+    {% for g in selected_dining %}<input type="hidden" name="dining_option" value="{{ g }}">{% endfor %}
 
-    <div class="rv-toolbar">
+    <div class="rv-toolbar" id="rv-toolbar">
       <div class="rv-summary">
         <strong>{{ orders|length }}</strong> order{{ '' if orders|length == 1 else 's' }}
-        &middot; <strong>{{ orders_with }}</strong> with review documents
-        &middot; <strong>{{ total_files }}</strong> file{{ '' if total_files == 1 else 's' }}
+        &middot; <strong>{{ orders_sent }}</strong> with sent ({{ total_sent }} file{{ '' if total_sent == 1 else 's' }})
+        &middot; <strong>{{ orders_with }}</strong> with review ({{ total_files }} file{{ '' if total_files == 1 else 's' }})
         {% if truncated %}<span class="rv-warn">Showing the newest {{ max_rows }}. Narrow your search to see the rest.</span>{% endif %}
       </div>
-      <label class="rv-cover"><input type="checkbox" name="covers" value="1" checked>
-        Cover sheet for each order</label>
-      <button type="submit" class="filter-btn" id="rv-print-btn" {% if not total_files %}disabled{% endif %}>PRINT ALL</button>
+      <div class="rv-selects" role="group" aria-label="Select documents">
+        <span class="rv-tool-label">SELECT</span>
+        <label class="rv-chipbox"><input type="checkbox" id="rv-all" {% if not total_files and not total_sent %}disabled{% endif %}> All</label>
+        <label class="rv-chipbox"><input type="checkbox" id="rv-all-sent" {% if not total_sent %}disabled{% endif %}> Sent</label>
+        <label class="rv-chipbox"><input type="checkbox" id="rv-all-review" {% if not total_files %}disabled{% endif %}> Review</label>
+      </div>
+      <button type="button" class="filter-btn filter-btn--ghost" id="rv-expand-all">EXPAND ALL</button>
+      <div class="rv-printgroup">
+        <label class="rv-cover"><input type="checkbox" name="covers" value="1" checked> Cover sheets</label>
+        <label class="rv-cover" id="rv-include-wrap" title="What PRINT ALL includes when nothing is ticked">
+          <select name="include" id="rv-include" class="filter-select">
+            <option value="both">Sent + review</option>
+            <option value="sent">Sent only</option>
+            <option value="review">Review only</option>
+          </select></label>
+        <button type="submit" class="filter-btn" id="rv-print-btn" {% if not total_files and not total_sent %}disabled{% endif %}>PRINT ALL</button>
+      </div>
     </div>
     <div class="rv-note" id="rv-note" hidden></div>
 
@@ -146,28 +185,52 @@
     <table class="rv-table" data-sortable>
       <thead>
         <tr>
-          <th class="rv-check"><input type="checkbox" id="rv-all" title="Select all"></th>
-          <th data-sort="text">Date</th><th data-sort="num">Order</th><th data-sort="text">Location</th><th data-sort="text">Company</th><th data-sort="text">Type</th><th data-sort="text">Customer</th><th data-sort="text">Address</th><th data-sort="num">Documents</th>
+          <th class="rv-check"></th>
+          <th class="rv-exp"></th>
+          <th data-sort="text">Date</th><th data-sort="num">Order</th><th data-sort="text">Location</th><th data-sort="text">Service</th><th data-sort="text">Company</th><th data-sort="text">Type</th><th data-sort="text">Customer</th><th data-sort="text">Address</th><th data-sort="num" class="rv-ct">Sent</th><th data-sort="num" class="rv-ct">Review</th>
         </tr>
       </thead>
       <tbody>
       {% for o in orders %}
-        <tr>
-          <td class="rv-check"><input type="checkbox" class="rv-pick" name="guid" value="{{ o.order_guid }}"
-                                     data-files="{{ o.files|length }}" {% if not o.files %}disabled title="No review documents"{% endif %}></td>
+        {% set past = o.order_date and o.order_date <= today %}
+        <tr class="rv-row">
+          <td class="rv-check"><input type="checkbox" class="rv-pick" title="Select all of this order's documents"
+                                     {% if not o.files and not o.sent %}disabled{% endif %}></td>
+          <td class="rv-exp"><button type="button" class="rv-toggle" aria-expanded="false" title="Show documents">&#9656;</button></td>
           <td data-v="{{ o.order_date.isoformat() if o.order_date else '' }}">{{ o.date_label }}</td>
           <td data-v="{{ o.order_number or '' }}">{% if o.order_number %}<a class="rv-order-link" href="{{ url_for('order_detail', order_guid=o.order_guid) }}" target="_blank" rel="noopener" title="Open order detail">{{ o.order_number }}</a>{% endif %}</td>
           <td>{{ o.location_name }}</td>
+          <td>{{ o.dining or '' }}</td>
           <td>{{ o.company or '' }}</td>
           <td>{{ o.client_type or '' }}</td>
           <td>{{ o.client or '' }}</td>
           <td>{{ o.address or '' }}</td>
-          <td class="rv-files" data-v="{{ o.files|length }}">
-            {% for f in o.files %}
-              <a href="{{ url_for('download_attachment', attachment_id=f.id) }}" target="_blank" rel="noopener">{{ f.filename }}</a>
-            {% else %}
-              <span class="rv-none">&mdash;</span>
-            {% endfor %}
+          <td class="rv-ct" data-v="{{ o.sent|length }}"><button type="button" class="rv-pill{% if not o.sent %} rv-pill--zero{% endif %}" data-open="sent" title="Sent documents">&#128206; {{ o.sent|length }}</button></td>
+          <td class="rv-ct" data-v="{{ o.files|length }}"><button type="button" class="rv-pill{% if not o.files %}{% if past %} rv-pill--missing{% else %} rv-pill--zero{% endif %}{% endif %}" data-open="review"
+                  title="{% if not o.files and past %}No review documents yet{% else %}Review documents{% endif %}">&#128221; {{ o.files|length }}</button></td>
+        </tr>
+        <tr class="rv-detail" hidden>
+          <td></td><td></td>
+          <td colspan="10">
+            <div class="rv-docs">
+              {% for key, title, docs in (('sent', 'Sent', o.sent), ('review', 'Review', o.files)) %}
+              <div class="rv-sec{% if not docs %} rv-sec--empty{% endif %}" data-section="{{ key }}">
+                <label class="rv-sec-head">
+                  <input type="checkbox" class="rv-sec-pick" {% if not docs %}disabled{% endif %}>
+                  <span class="rv-sec-title">{{ title }}</span>
+                  <span class="rv-sec-sub">{{ 'pre-order' if key == 'sent' else 'post-order' }}</span>
+                  <span class="rv-sec-count">{{ docs|length }} file{{ '' if docs|length == 1 else 's' }}</span>
+                </label>
+                {% for d in docs %}
+                <div class="rv-doc">
+                  <label><input type="checkbox" class="rv-file" name="file" value="{{ d.id }}" data-kind="{{ key }}">
+                    <span class="rv-doc-name">{{ d.filename }}</span></label>
+                  <a href="{{ url_for('download_attachment', attachment_id=d.id) }}" target="_blank" rel="noopener" class="rv-view">VIEW</a>
+                </div>
+                {% endfor %}
+              </div>
+              {% endfor %}
+            </div>
           </td>
         </tr>
       {% endfor %}
@@ -233,6 +296,30 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('DOMContentLoaded', updateLocLabel);
 
+// ── Service (dining option) dropdown ──────────────────────────────────────────
+function updateDOLabel() {
+    const checked = [...document.querySelectorAll('#do-panel input[name="dining_option"]:checked')];
+    const label = document.getElementById('do-label'), badge = document.getElementById('do-count'), allCb = document.getElementById('do-opt-all');
+    if (!checked.length) { label.textContent = 'All services'; badge.style.display = 'none'; allCb.checked = true; }
+    else {
+        label.textContent = checked[0].nextElementSibling.textContent.trim(); allCb.checked = false;
+        badge.textContent = checked.length; badge.style.display = checked.length > 1 ? 'inline-flex' : 'none';
+    }
+}
+function toggleDOPanel(e) { e.stopPropagation(); const p = document.getElementById('do-panel'); p.style.display = p.style.display === 'block' ? 'none' : 'block'; }
+function toggleDOOpt(e) {
+    const cb = e.currentTarget.querySelector('input[type=checkbox]');
+    if (e.target !== cb) cb.checked = !cb.checked;
+    document.getElementById('do-opt-all').checked = false; updateDOLabel();
+}
+function toggleDOAll(e) {
+    const all = document.getElementById('do-opt-all');
+    if (e.target !== all) all.checked = !all.checked;
+    if (all.checked) document.querySelectorAll('#do-panel input[name="dining_option"]').forEach(c => c.checked = false);
+    updateDOLabel();
+}
+document.addEventListener('DOMContentLoaded', updateDOLabel);
+
 // ── Company type dropdown ─────────────────────────────────────────────────────
 function updateTypeLabel() {
   const label = document.getElementById('type-label');
@@ -268,31 +355,74 @@ document.addEventListener('click', e => {
 document.addEventListener('DOMContentLoaded', updateTypeLabel);
 
 (function () {
-  const form  = document.getElementById('rv-print');
+  const form = document.getElementById('rv-print');
   if (!form) return;
-  const btn   = document.getElementById('rv-print-btn');
-  const note  = document.getElementById('rv-note');
-  const all   = document.getElementById('rv-all');
-  const picks = () => Array.from(form.querySelectorAll('.rv-pick:not(:disabled)'));
+  const btn  = document.getElementById('rv-print-btn');
+  const note = document.getElementById('rv-note');
+  const inc  = document.getElementById('rv-include');
+  const files = kind => Array.from(form.querySelectorAll(kind ? `.rv-file[data-kind="${kind}"]` : '.rv-file'));
+  const maxFiles = parseInt(form.dataset.maxFiles, 10);
+  const MASTER = { 'rv-all': null, 'rv-all-sent': 'sent', 'rv-all-review': 'review' };
 
+  function mark(box, fs) {            // checked / partial / empty, from a set of file boxes
+    const on = fs.filter(c => c.checked).length;
+    box.checked = fs.length > 0 && on === fs.length;
+    box.indeterminate = on > 0 && on < fs.length;
+  }
   function refresh() {
-    const sel = picks().filter(c => c.checked);
-    const orders = sel.length || parseInt(form.dataset.totalOrders, 10);
-    const files  = sel.length ? sel.reduce((n, c) => n + parseInt(c.dataset.files, 10), 0)
-                              : parseInt(form.dataset.totalFiles, 10);
-    btn.textContent = sel.length ? `PRINT ${sel.length} SELECTED` : 'PRINT ALL';
-    const maxFiles = parseInt(form.dataset.maxFiles, 10);
-    const tooMany = files > maxFiles;
-    btn.disabled = tooMany || files === 0;
+    const sel = files().filter(c => c.checked).length;
+    const all = (inc.value !== 'sent' ? parseInt(form.dataset.totalReview, 10) : 0) +
+                (inc.value !== 'review' ? parseInt(form.dataset.totalSent, 10) : 0);
+    const n = sel || all;
+    btn.textContent = sel ? `PRINT ${sel} FILE${sel === 1 ? '' : 'S'}` : 'PRINT ALL';
+    inc.disabled = sel > 0;
+    document.getElementById('rv-include-wrap').classList.toggle('is-off', sel > 0);
+    const tooMany = n > maxFiles;
+    btn.disabled = tooMany || n === 0;
     note.hidden = !tooMany;
-    note.textContent = tooMany
-      ? `That is ${files} files and one PDF holds up to ${maxFiles}. Tick fewer orders or narrow the search.` : '';
-    if (all) all.checked = sel.length > 0 && sel.length === picks().length;
+    note.textContent = tooMany ? `That is ${n} files and one PDF holds up to ${maxFiles}. Tick fewer or narrow the search.` : '';
+    form.querySelectorAll('.rv-row').forEach(row => {
+      mark(row.querySelector('.rv-pick'), Array.from(row.nextElementSibling.querySelectorAll('.rv-file')));
+      row.classList.toggle('has-picks', !!row.nextElementSibling.querySelector('.rv-file:checked'));
+    });
+    form.querySelectorAll('.rv-sec').forEach(sec => mark(sec.querySelector('.rv-sec-pick'), Array.from(sec.querySelectorAll('.rv-file'))));
+    Object.entries(MASTER).forEach(([id, kind]) => mark(document.getElementById(id), files(kind)));
   }
   form.addEventListener('change', e => {
-    if (e.target === all) picks().forEach(c => { c.checked = all.checked; });
+    const t = e.target;
+    if (t.id in MASTER) files(MASTER[t.id]).forEach(c => { c.checked = t.checked; });
+    else if (t.classList.contains('rv-pick')) t.closest('.rv-row').nextElementSibling.querySelectorAll('.rv-file').forEach(c => { c.checked = t.checked; });
+    else if (t.classList.contains('rv-sec-pick')) t.closest('.rv-sec').querySelectorAll('.rv-file').forEach(c => { c.checked = t.checked; });
     refresh();
   });
+
+  // expand / collapse
+  function setOpen(row, open) {
+    row.nextElementSibling.hidden = !open;
+    const b = row.querySelector('.rv-toggle'); b.setAttribute('aria-expanded', open); b.innerHTML = open ? '&#9662;' : '&#9656;';
+    row.classList.toggle('is-open', open);
+  }
+  form.addEventListener('click', e => {
+    const row = e.target.closest('.rv-row');
+    if (!row || !(e.target.closest('.rv-toggle') || e.target.closest('.rv-pill'))) return;
+    setOpen(row, row.nextElementSibling.hidden);
+  });
+  const ex = document.getElementById('rv-expand-all');
+  ex.addEventListener('click', () => {
+    const open = ex.textContent.trim() === 'EXPAND ALL';
+    form.querySelectorAll('.rv-row').forEach(r => setOpen(r, open));
+    ex.textContent = open ? 'COLLAPSE ALL' : 'EXPAND ALL';
+  });
+
+  // keep the toolbar and the column headings in view (below the site header) while scrolling
+  const header = document.querySelector('.site-header'), bar = document.getElementById('rv-toolbar');
+  function stick() {
+    const top = header && getComputedStyle(header).position === 'sticky' ? header.offsetHeight : 0;
+    form.style.setProperty('--rv-top', top + 'px');
+    form.style.setProperty('--rv-head', (top + bar.offsetHeight) + 'px');
+  }
+  stick(); window.addEventListener('resize', stick);
+  if (window.ResizeObserver) new ResizeObserver(stick).observe(bar);
   refresh();
 })();
 </script>

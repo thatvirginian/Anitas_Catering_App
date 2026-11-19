@@ -6,8 +6,8 @@
     document.querySelectorAll('table[data-sortable]').forEach(function (table) {
         var body = table.tBodies[0];
         if (!body) return;
-        var rows = Array.prototype.slice.call(body.rows);
-        rows.forEach(function (r, i) { r._i = i; });
+        var rows = Array.prototype.slice.call(body.rows).filter(function (r) { return !r.classList.contains('rv-detail'); });
+        rows.forEach(function (r, i) { r._i = i; var n = r.nextElementSibling; r._d = n && n.classList.contains('rv-detail') ? n : null; });
         var heads = Array.prototype.slice.call(table.tHead.rows[0].cells);
         var state = { col: -1, dir: 0 };            // dir: 1 asc, -1 desc, 0 original
 
@@ -39,7 +39,7 @@
                 if (x > y) return dir;
                 return a._i - b._i;
             });
-            sorted.forEach(function (r) { body.appendChild(r); });
+            sorted.forEach(function (r) { body.appendChild(r); if (r._d) body.appendChild(r._d); });
             paint();
         }
         heads.forEach(function (h, i) {

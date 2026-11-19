@@ -2966,6 +2966,8 @@ def _review_args():
         "order":    (request.args.get("order")   or "").strip()[:20],
         "types":    types,
         "locations": _parse_locations(),
+        "dining":    [x for x in request.args.getlist("dining_option")
+                      if x in {d["guid"] for d in _get_dining_options()}][:20],
         "start":    _d("start"),
         "end":      _d("end"),
         "docs":     request.args.get("docs") if request.args.get("docs") in ("has", "none") else "any",
@@ -2973,12 +2975,12 @@ def _review_args():
 
 
 # Query-string keys the search form sends. The page only searches once at least one is present.
-REVIEW_FILTER_KEYS = ("start", "end", "location", "company", "customer", "client_type", "address", "order", "docs")
+REVIEW_FILTER_KEYS = ("start", "end", "location", "dining_option", "company", "customer", "client_type", "address", "order", "docs")
 
 
 def _review_blank_filters():
     return {"company": "", "customer": "", "address": "", "order": "",
-            "types": [], "locations": [], "start": None, "end": None, "docs": "has"}
+            "types": [], "locations": [], "dining": [], "start": None, "end": None, "docs": "has"}
 
 
 def _review_search(f, guids=None, limit=REVIEW_MAX_ROWS, newest_first=True):
@@ -2991,12 +2993,12 @@ def _review_search(f, guids=None, limit=REVIEW_MAX_ROWS, newest_first=True):
     """
     address = "CONCAT_WS(' ', di.address1, di.address2, di.city, di.state, di.zip_code)"
 
-    params = {}
+    params = {"dkinds": list(f.get("doc_kinds") or ("post",))}
     extra  = ""
     if f["docs"] == "has":
-        extra += "AND EXISTS (SELECT 1 FROM order_attachments oa WHERE oa.order_guid = oh.order_guid AND oa.kind = 'post')\n"
+        extra += "AND EXISTS (SELECT 1 FROM order_attachments oa WHERE oa.order_guid = oh.order_guid AND oa.kind = ANY(:dkinds))\n"
     elif f["docs"] == "none":
-        extra += "AND NOT EXISTS (SELECT 1 FROM order_attachments oa WHERE oa.order_guid = oh.order_guid AND oa.kind = 'post')\n"
+        extra += "AND NOT EXISTS (SELECT 1 FROM order_attachments oa WHERE oa.order_guid = oh.order_guid AND oa.kind = ANY(:dkinds))\n"
     extra += _catering_filter_sql(params, f["company"], f["customer"], f["types"])
     extra += "".join(f"AND {c}\n" for c in
                      _like_terms(address, f["address"], params, "ad") +
@@ -3004,6 +3006,9 @@ def _review_search(f, guids=None, limit=REVIEW_MAX_ROWS, newest_first=True):
     if f.get("locations"):
         params["locs"] = list(f["locations"])
         extra += "AND oh.location_id::text = ANY(:locs)\n"
+    if f.get("dining"):
+        params["dguids"] = list(f["dining"])
+        extra += "AND oh.dining_option_guid::text = ANY(:dguids)\n"
     if guids:
         params["guids"] = list(guids)
         extra += "AND oh.order_guid = ANY(:guids)\n"
@@ -3021,6 +3026,7 @@ def _review_search(f, guids=None, limit=REVIEW_MAX_ROWS, newest_first=True):
             oh.order_guid,
             oh.order_number,
             l.location_name,
+            do_.name AS dining,
             (oh.estimated_fulfillment_date AT TIME ZONE l.timezone)::date AS order_date,
             {_SQL_COMPANY} AS company,
             {_SQL_CTYPE}   AS client_type,
@@ -3031,6 +3037,8 @@ def _review_search(f, guids=None, limit=REVIEW_MAX_ROWS, newest_first=True):
         FROM orders_head oh
         JOIN locations l
             ON oh.location_id::text = l.store_guid::text
+        LEFT JOIN dining_options do_
+            ON do_.guid::text = oh.dining_option_guid::text
         LEFT JOIN LATERAL (
             SELECT customer_first, customer_last, customer_guid
             FROM order_checks
@@ -3061,18 +3069,25 @@ def _review_search(f, guids=None, limit=REVIEW_MAX_ROWS, newest_first=True):
     return rows, truncated
 
 
-def _review_files(order_guids):
-    """{order_guid: [review file rows]} for the given orders, oldest upload first."""
+REVIEW_INCLUDE = {"review": ("post",), "sent": ("pre",), "both": ("pre", "post")}
+
+
+def _review_files(order_guids, kinds=("post",)):
+    """
+    {order_guid: [file rows]} for the given orders, oldest upload first.
+    kinds: "post" = review documents, "pre" = the documents we sent (the order's attachments).
+    Each row carries its `kind`; with both kinds, sent files come before review files.
+    """
     out = {}
     if not order_guids:
         return out
     with engine.connect() as conn:
         rows = conn.execute(text("""
-            SELECT id, order_guid, filename, sharepoint_id, uploaded_at
+            SELECT id, order_guid, kind, filename, sharepoint_id, uploaded_at
             FROM order_attachments
-            WHERE kind = 'post' AND order_guid = ANY(:guids)
-            ORDER BY uploaded_at, id
-        """), {"guids": list(order_guids)}).mappings().all()
+            WHERE kind = ANY(:kinds) AND order_guid = ANY(:guids)
+            ORDER BY (kind = 'post'), uploaded_at, id
+        """), {"guids": list(order_guids), "kinds": list(kinds)}).mappings().all()
     for r in rows:
         out.setdefault(r["order_guid"], []).append(dict(r))
     return out
@@ -3086,23 +3101,30 @@ def reviews():
     # so pressing SEARCH with every box blank lists the newest orders).
     searched = any(k in request.args for k in REVIEW_FILTER_KEYS)
     orders, truncated = _review_search(f) if searched else ([], False)
-    files = _review_files([o["order_guid"] for o in orders])
+    guids_ = [o["order_guid"] for o in orders]
+    review_f, sent_f = _review_files(guids_, ("post",)), _review_files(guids_, ("pre",))
     for o in orders:
-        o["files"] = files.get(o["order_guid"], [])
+        o["files"] = review_f.get(o["order_guid"], [])      # review documents
+        o["sent"]  = sent_f.get(o["order_guid"], [])        # documents we sent
     total_files  = sum(len(o["files"]) for o in orders)
+    total_sent   = sum(len(o["sent"]) for o in orders)
     orders_with  = sum(1 for o in orders if o["files"])
+    orders_sent  = sum(1 for o in orders if o["sent"])
     return render_template(
         "reviews.html",
         searched=searched, docs=f["docs"], orders_with=orders_with,
+        orders_sent=orders_sent, total_sent=total_sent,
         orders=orders, truncated=truncated, total_files=total_files,
         company=f["company"], customer=f["customer"],
         address=f["address"], order_no=f["order"],
         selected_types=f["types"], client_types=_get_client_types(),
         locations=_get_locations(), selected_locations=f["locations"],
+        dining_options=_get_dining_options(), selected_dining=f["dining"],
+        today=datetime.now(pytz.timezone("America/New_York")).date(),
         start=f["start"].isoformat() if f["start"] else "",
         end=f["end"].isoformat() if f["end"] else "",
         filters_active=any([f["company"], f["customer"], f["address"], f["order"],
-                            f["types"], f["locations"], f["start"], f["end"], f["docs"] != "any"]),
+                            f["types"], f["locations"], f["dining"], f["start"], f["end"], f["docs"] != "any"]),
         max_rows=REVIEW_MAX_ROWS, max_files=REVIEW_PDF_MAX_FILES,
     )
 
@@ -3199,8 +3221,10 @@ def _build_review_pdf(orders, files_by_order, blobs, covers):
                       (o.get("client") or "", 46, 4),
                       (o.get("address") or "", 40, 28),
                       (f"{o['date_label']}  -  {o['location_name']}", 40, 28),
-                      (f"{len(files)} review document{'s' if len(files) != 1 else ''}:", 38, 6)]
-            blocks += [(f["filename"], 34, 0) for f in files[:14]]
+                      (f"{len(files)} document{'s' if len(files) != 1 else ''}:", 38, 6)]
+            kinds_here = {f.get("kind") for f in files}
+            tag = lambda f: (" (sent)" if f.get("kind") == "pre" else " (review)") if len(kinds_here) > 1 else ""
+            blocks += [(f["filename"] + tag(f), 34, 0) for f in files[:14]]
             if len(files) > 14:
                 blocks.append((f"... and {len(files) - 14} more", 34, 0))
             _add(_text_page_pdf([b for b in blocks if b[0]]))
@@ -3253,20 +3277,40 @@ def reviews_pdf():
 
     f = _review_args()
     guids = [x for x in request.args.getlist("guid") if x][:REVIEW_MAX_ROWS]
+    file_ids = [int(x) for x in request.args.getlist("file") if x.isdigit()][:REVIEW_PDF_MAX_FILES + 1]
     covers = request.args.get("covers", "1") != "0"
+    include = request.args.get("include", "review")
+    if include not in REVIEW_INCLUDE:
+        include = "review"
+    kinds = REVIEW_INCLUDE[include]
+    f["doc_kinds"] = kinds
     if f["docs"] == "any":      # orders without documents add nothing, and shouldn't use up the row limit
         f["docs"] = "has"
 
+    picked = None
+    if file_ids:    # individually ticked files win over everything else
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT id, order_guid, kind, filename, sharepoint_id, uploaded_at
+                FROM order_attachments
+                WHERE id::text = ANY(:ids) AND kind IN ('pre', 'post')
+                ORDER BY (kind = 'post'), uploaded_at, id
+            """), {"ids": [str(i) for i in file_ids]}).mappings().all()
+        picked = {}
+        for r in rows:
+            picked.setdefault(r["order_guid"], []).append(dict(r))
+        kinds = ("pre", "post")
+        guids = list(picked)
     if guids:   # ticked rows win: the filters only built the list they came from
-        orders, _ = _review_search(_review_blank_filters(), guids=guids,
+        orders, _ = _review_search({**_review_blank_filters(), "doc_kinds": kinds}, guids=guids,
                                    limit=REVIEW_MAX_ROWS, newest_first=False)
     else:
         orders, _ = _review_search(f, limit=REVIEW_MAX_ROWS, newest_first=False)
-    files_by_order = _review_files([o["order_guid"] for o in orders])
+    files_by_order = picked if picked is not None else _review_files([o["order_guid"] for o in orders], kinds)
     all_files = [f for o in orders for f in files_by_order.get(o["order_guid"], [])]
 
     if not all_files:
-        return Response("No review documents match.", status=404, mimetype="text/plain")
+        return Response("No documents match.", status=404, mimetype="text/plain")
     if len(all_files) > REVIEW_PDF_MAX_FILES:
         return Response(f"That is {len(all_files)} files; the limit is {REVIEW_PDF_MAX_FILES} per PDF. "
                         "Narrow the search or tick fewer orders.", status=400, mimetype="text/plain")
@@ -3289,7 +3333,7 @@ def reviews_pdf():
     pdf, _skipped = _build_review_pdf(orders, files_by_order, blobs, covers)
     stamp = datetime.now(pytz.timezone("America/New_York")).strftime("%Y%m%d")
     return Response(pdf, mimetype="application/pdf", headers={
-        "Content-Disposition": f'inline; filename="review-documents-{stamp}.pdf"',
+        "Content-Disposition": f'inline; filename="{"review" if include == "review" else "order"}-documents-{stamp}.pdf"',
         "X-Content-Type-Options": "nosniff",
     })
 
