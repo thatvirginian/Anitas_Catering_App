@@ -296,6 +296,59 @@ def _get_client_types():
     return [r["name"] for r in rows]
 
 
+# Shared by the manager page (/store) and the Reviews page. Both queries use the
+# same aliases: oc = first order check, cd = catering_details, ccc = customer's company.
+_SQL_COMPANY  = "COALESCE(NULLIF(cd.event_company, ''), ccc.company_name)"
+_SQL_CTYPE    = "COALESCE(NULLIF(cd.client_type, ''), ccc.client_type)"
+_SQL_CUSTOMER = "CONCAT_WS(' ', oc.customer_first, oc.customer_last)"
+
+
+def _like_terms(expr, value, params, prefix):
+    """
+    One ILIKE condition per word typed (max 6): every word must appear in expr,
+    in any order. %, _ and backslash are matched literally. Fills `params`.
+    """
+    conds = []
+    for i, term in enumerate((value or "").split()[:6]):
+        key = f"{prefix}{i}"
+        params[key] = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        conds.append(f"{expr} ILIKE :{key} ESCAPE '\\'")
+    return conds
+
+
+def _catering_filter_sql(params, company="", customer="", client_types=None):
+    """
+    'AND ...' lines for the company / customer / company-type filters.
+    Blank filters add nothing. Fills `params`.
+    """
+    conds  = _like_terms(_SQL_COMPANY,  company,  params, "co")
+    conds += _like_terms(_SQL_CUSTOMER, customer, params, "cu")
+    types = [t.strip().lower() for t in (client_types or []) if t and t.strip()]
+    if types:
+        params["ctypes"] = types
+        conds.append(f"LOWER({_SQL_CTYPE}) = ANY(:ctypes)")
+    return "".join(f"AND {c}\n" for c in conds)
+
+
+def _parse_catering_filters():
+    """Company / customer / company-type values from the query string."""
+    company  = (request.args.get("company")  or "").strip()[:100]
+    customer = (request.args.get("customer") or "").strip()[:100]
+    types    = [t.strip() for t in request.args.getlist("client_type") if t and t.strip()][:30]
+    return company, customer, types
+
+
+def _parse_locations():
+    """Location guids from the query string (?location=...), limited to known locations."""
+    known = {l["guid"] for l in _get_locations()}
+    return [x for x in request.args.getlist("location") if x in known][:60]
+
+
+def _location_label(guids):
+    names = {l["guid"]: l["name"] for l in _get_locations()}
+    return ", ".join(names[g] for g in guids if g in names)
+
+
 def to_date_str(val):
     """Convert a date/datetime/string to YYYY-MM-DD string or None."""
     if val is None:
@@ -438,7 +491,8 @@ def _driver_filter_sql(driver_filter, params):
     return "AND (" + " OR ".join(clauses) + ")"
 
 
-def _get_store_orders(start_date, end_date, location_guids=None, dining_option_guids=None):
+def _get_store_orders(start_date, end_date, location_guids=None, dining_option_guids=None,
+                      company="", customer="", client_types=None):
     """
     Same as _get_orders but filtered by location(s) and without route grouping.
     Returns { location_name: {"orders": [...], "location_total": "$x,xxx.xx"} }
@@ -453,6 +507,7 @@ def _get_store_orders(start_date, end_date, location_guids=None, dining_option_g
     if dining_option_guids:
         dining_filter = "AND oh.dining_option_guid::text = ANY(:dining_option_guids)"
         params["dining_option_guids"] = dining_option_guids
+    catering_filter = _catering_filter_sql(params, company, customer, client_types)
 
     sql = text(f"""
         SELECT
@@ -510,6 +565,7 @@ def _get_store_orders(start_date, end_date, location_guids=None, dining_option_g
                 BETWEEN :start_date AND :end_date
           {location_filter}
           {dining_filter}
+          {catering_filter}
         ORDER BY
             l.location_name,
             oh.estimated_fulfillment_date
@@ -547,13 +603,15 @@ def _get_store_orders(start_date, end_date, location_guids=None, dining_option_g
 
 
 
-def _get_orders(start_date, end_date, dining_option_guids=None, driver_filter=None):
+def _get_orders(start_date, end_date, dining_option_guids=None, driver_filter=None,
+                company="", customer="", client_types=None, location_guids=None):
     """
     Pull all catering orders in the date range, joined to location and
     catering_details. Returns rows grouped as:
         { route: { location_name: {"orders": [...], "location_total": "$x,xxx.xx"} } }
     Optional dining_option_guids (list) filters to specific dining options.
     Optional driver_filter is the tuple from _resolve_driver_filter().
+    Optional company / customer (words, any order) and client_types (list) narrow further.
     """
     dining_filter = ""
     params = {"start_date": start_date, "end_date": end_date}
@@ -561,6 +619,10 @@ def _get_orders(start_date, end_date, dining_option_guids=None, driver_filter=No
         dining_filter = "AND oh.dining_option_guid::text = ANY(:dining_option_guids)"
         params["dining_option_guids"] = dining_option_guids
     driver_sql = _driver_filter_sql(driver_filter, params)
+    catering_filter = _catering_filter_sql(params, company, customer, client_types)
+    if location_guids:
+        catering_filter += "AND oh.location_id::text = ANY(:location_guids)\n"
+        params["location_guids"] = list(location_guids)
 
     sql = text(f"""
         SELECT
@@ -621,6 +683,7 @@ def _get_orders(start_date, end_date, dining_option_guids=None, driver_filter=No
               BETWEEN :start_date AND :end_date
           {dining_filter}
           {driver_sql}
+          {catering_filter}
         ORDER BY
             l.route DESC,
             l.location_name,
@@ -694,8 +757,8 @@ def home():
 def admin():
     return render_template("admin.html")
 
-@role_required("admin","catering")
 @app.route("/schedule")
+@role_required("admin","catering")
 def index():
     today     = date.today()
     start_str = request.args.get("start", today.strftime("%Y-%m-%d"))
@@ -722,7 +785,11 @@ def index():
     selected_drivers, selected_group_ids = _parse_driver_filter()
     driver_filter = _resolve_driver_filter(selected_drivers, selected_group_ids)
 
-    grouped = _get_orders(start_date, end_date, selected_guids or None, driver_filter)
+    company, customer, selected_types = _parse_catering_filters()
+
+    selected_locations = _parse_locations()
+    grouped = _get_orders(start_date, end_date, selected_guids or None, driver_filter,
+                          company, customer, selected_types, selected_locations or None)
     totals  = _get_route_totals(grouped)
 
     # Collect all order guids for notification check
@@ -754,6 +821,11 @@ def index():
         driver_groups        = _get_driver_groups(),
         selected_drivers     = selected_drivers,
         selected_groups      = [str(i) for i in selected_group_ids],
+        company              = company,
+        customer             = customer,
+        selected_types       = selected_types,
+        locations            = _get_locations(),
+        selected_locations   = selected_locations,
     )
 
 
@@ -885,7 +957,11 @@ def print_view():
     selected_drivers, selected_group_ids = _parse_driver_filter()
     driver_filter = _resolve_driver_filter(selected_drivers, selected_group_ids)
 
-    grouped = _get_orders(start_date, end_date, selected_guids or None, driver_filter)
+    company, customer, selected_types = _parse_catering_filters()
+
+    selected_locations = _parse_locations()
+    grouped = _get_orders(start_date, end_date, selected_guids or None, driver_filter,
+                          company, customer, selected_types, selected_locations or None)
 
     if route_filter != "both":
         grouped = {
@@ -919,6 +995,12 @@ def print_view():
         route_filter        = route_filter,
         dining_option_guids = selected_guids,
         driver_filter_label = ", ".join(driver_label_parts),
+        filter_label        = "; ".join(
+            ([f"Location: {_location_label(selected_locations)}"] if selected_locations else []) +
+            ([f"Company: {company}"]            if company else []) +
+            ([f"Customer: {customer}"]          if customer else []) +
+            ([f"Type: {', '.join(selected_types)}"] if selected_types else [])
+        ),
     )
 
 
@@ -1079,10 +1161,13 @@ def store():
     else:
         selected_locations = request.args.getlist("location")
 
+    company, customer, selected_types = _parse_catering_filters()
+
     grouped = _get_store_orders(
         start_date, end_date,
         selected_locations or None,
         selected_dining_guids or None,
+        company, customer, selected_types,
     )
 
     # Grand total
@@ -1108,6 +1193,10 @@ def store():
         selected_locations    = selected_locations,
         dining_options        = dining_options,
         dining_option_guids   = selected_dining_guids,
+        company               = company,
+        customer              = customer,
+        selected_types        = selected_types,
+        client_types          = _get_client_types(),
         drivers_by_location   = _get_drivers_by_location(),
         unread_notifications  = unread,
         has_attachments       = has_attachments,
@@ -1133,10 +1222,13 @@ def store_print():
     if "" in selected_dining_guids:
         selected_dining_guids = []
 
+    company, customer, selected_types = _parse_catering_filters()
+
     grouped = _get_store_orders(
         start_date, end_date,
         selected_locations or None,
         selected_dining_guids or None,
+        company, customer, selected_types,
     )
 
     grand_total = _fmt(sum(
@@ -2841,6 +2933,365 @@ def forecast_export():
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+# ── Review documents: search + combined PDF ───────────────────────────────────
+# /reviews      – find orders (by company / client / address / order #) that have
+#                 post-order review documents
+# /reviews/pdf  – merge every review document for those orders into one PDF
+#                 (photos are fitted onto letter pages, optional cover sheet per order)
+
+REVIEW_MAX_ROWS        = 200
+REVIEW_PDF_MAX_FILES   = 100
+REVIEW_PDF_MAX_BYTES   = 150 * 1024 * 1024
+REVIEW_PDF_DL_WORKERS  = 6
+
+
+def _review_args():
+    """
+    Filters from the query string: company, customer, address, order #,
+    company type(s) and date range. Blank filters are ignored.
+    """
+    def _d(key):
+        try:
+            return datetime.strptime(request.args.get(key) or "", "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    company, customer, types = _parse_catering_filters()
+    return {
+        "company":  company,
+        "customer": customer,
+        "address":  (request.args.get("address") or "").strip()[:100],
+        "order":    (request.args.get("order")   or "").strip()[:20],
+        "types":    types,
+        "locations": _parse_locations(),
+        "start":    _d("start"),
+        "end":      _d("end"),
+        "docs":     request.args.get("docs") if request.args.get("docs") in ("has", "none") else "any",
+    }
+
+
+# Query-string keys the search form sends. The page only searches once at least one is present.
+REVIEW_FILTER_KEYS = ("start", "end", "location", "company", "customer", "client_type", "address", "order", "docs")
+
+
+def _review_blank_filters():
+    return {"company": "", "customer": "", "address": "", "order": "",
+            "types": [], "locations": [], "start": None, "end": None, "docs": "has"}
+
+
+def _review_search(f, guids=None, limit=REVIEW_MAX_ROWS, newest_first=True):
+    """
+    Catering orders that match every filter in `f` (see _review_args); f["docs"] is
+    "has" (only orders with review documents), "none" (only orders without) or
+    "any". Each box matches on all the words typed,
+    in any order, so address "main st arlington" finds "123 Main St, Arlington".
+    Returns (orders, truncated).
+    """
+    address = "CONCAT_WS(' ', di.address1, di.address2, di.city, di.state, di.zip_code)"
+
+    params = {}
+    extra  = ""
+    if f["docs"] == "has":
+        extra += "AND EXISTS (SELECT 1 FROM order_attachments oa WHERE oa.order_guid = oh.order_guid AND oa.kind = 'post')\n"
+    elif f["docs"] == "none":
+        extra += "AND NOT EXISTS (SELECT 1 FROM order_attachments oa WHERE oa.order_guid = oh.order_guid AND oa.kind = 'post')\n"
+    extra += _catering_filter_sql(params, f["company"], f["customer"], f["types"])
+    extra += "".join(f"AND {c}\n" for c in
+                     _like_terms(address, f["address"], params, "ad") +
+                     _like_terms("oh.order_number::text", f["order"], params, "on"))
+    if f.get("locations"):
+        params["locs"] = list(f["locations"])
+        extra += "AND oh.location_id::text = ANY(:locs)\n"
+    if guids:
+        params["guids"] = list(guids)
+        extra += "AND oh.order_guid = ANY(:guids)\n"
+    if f["start"]:
+        params["start"] = f["start"]
+        extra += "AND (oh.estimated_fulfillment_date AT TIME ZONE l.timezone)::date >= :start\n"
+    if f["end"]:
+        params["end"] = f["end"]
+        extra += "AND (oh.estimated_fulfillment_date AT TIME ZONE l.timezone)::date <= :end\n"
+    params["lim"] = limit + 1
+    direction = "DESC" if newest_first else "ASC"
+
+    sql = text(f"""
+        SELECT
+            oh.order_guid,
+            oh.order_number,
+            l.location_name,
+            (oh.estimated_fulfillment_date AT TIME ZONE l.timezone)::date AS order_date,
+            {_SQL_COMPANY} AS company,
+            {_SQL_CTYPE}   AS client_type,
+            NULLIF(TRIM({_SQL_CUSTOMER}), '') AS client,
+            NULLIF(CONCAT_WS(', ', NULLIF(di.address1, ''), NULLIF(di.address2, ''),
+                             NULLIF(di.city, ''), NULLIF(di.state, ''),
+                             NULLIF(di.zip_code, '')), '') AS address
+        FROM orders_head oh
+        JOIN locations l
+            ON oh.location_id::text = l.store_guid::text
+        LEFT JOIN LATERAL (
+            SELECT customer_first, customer_last, customer_guid
+            FROM order_checks
+            WHERE order_guid = oh.order_guid
+            ORDER BY opened_date NULLS LAST, check_guid
+            LIMIT 1
+        ) oc ON true
+        LEFT JOIN catering_details cd
+            ON cd.order_guid = oh.order_guid
+        LEFT JOIN catering_customer_companies ccc
+            ON ccc.customer_guid = oc.customer_guid
+        LEFT JOIN order_delivery_info di
+            ON di.order_guid = oh.order_guid
+        WHERE oh.voided = FALSE
+          AND (oh.source = 'Catering' OR oh.source = 'Invoice')
+          {extra}
+        ORDER BY order_date {direction}, l.location_name, oh.order_number
+        LIMIT :lim
+    """)
+    with engine.connect() as conn:
+        rows = [dict(r) for r in conn.execute(sql, params).mappings().all()]
+
+    truncated = len(rows) > limit
+    rows = rows[:limit]
+    for r in rows:
+        d = r.get("order_date")
+        r["date_label"] = f"{d.month}/{d.day}/{d.year}" if d else ""
+    return rows, truncated
+
+
+def _review_files(order_guids):
+    """{order_guid: [review file rows]} for the given orders, oldest upload first."""
+    out = {}
+    if not order_guids:
+        return out
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT id, order_guid, filename, sharepoint_id, uploaded_at
+            FROM order_attachments
+            WHERE kind = 'post' AND order_guid = ANY(:guids)
+            ORDER BY uploaded_at, id
+        """), {"guids": list(order_guids)}).mappings().all()
+    for r in rows:
+        out.setdefault(r["order_guid"], []).append(dict(r))
+    return out
+
+
+@app.route("/reviews")
+@role_required("admin", "catering")
+def reviews():
+    f = _review_args()
+    # Nothing is queried until a search is made (the form always sends `docs`,
+    # so pressing SEARCH with every box blank lists the newest orders).
+    searched = any(k in request.args for k in REVIEW_FILTER_KEYS)
+    orders, truncated = _review_search(f) if searched else ([], False)
+    files = _review_files([o["order_guid"] for o in orders])
+    for o in orders:
+        o["files"] = files.get(o["order_guid"], [])
+    total_files  = sum(len(o["files"]) for o in orders)
+    orders_with  = sum(1 for o in orders if o["files"])
+    return render_template(
+        "reviews.html",
+        searched=searched, docs=f["docs"], orders_with=orders_with,
+        orders=orders, truncated=truncated, total_files=total_files,
+        company=f["company"], customer=f["customer"],
+        address=f["address"], order_no=f["order"],
+        selected_types=f["types"], client_types=_get_client_types(),
+        locations=_get_locations(), selected_locations=f["locations"],
+        start=f["start"].isoformat() if f["start"] else "",
+        end=f["end"].isoformat() if f["end"] else "",
+        filters_active=any([f["company"], f["customer"], f["address"], f["order"],
+                            f["types"], f["locations"], f["start"], f["end"], f["docs"] != "any"]),
+        max_rows=REVIEW_MAX_ROWS, max_files=REVIEW_PDF_MAX_FILES,
+    )
+
+
+def _pdf_font(size):
+    from PIL import ImageFont
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:               # very old Pillow: fixed-size font
+        return ImageFont.load_default()
+
+
+def _pil_page_to_pdf(page):
+    import io as _io
+    buf = _io.BytesIO()
+    page.save(buf, "PDF", resolution=150.0, quality=88)
+    return buf.getvalue()
+
+
+def _text_page_pdf(blocks):
+    """
+    A letter-size page (150 dpi) of text. blocks = [(text, font_size, bold_gap)].
+    Long lines are word-wrapped to the page width.
+    """
+    from PIL import Image, ImageDraw
+    W, H, M = 1275, 1650, 110
+    page = Image.new("RGB", (W, H), "white")
+    draw = ImageDraw.Draw(page)
+    y = M
+    for text_, size, gap in blocks:
+        font = _pdf_font(size)
+        line = ""
+        for word in str(text_).split():
+            trial = (line + " " + word).strip()
+            if draw.textlength(trial, font=font) <= W - 2 * M or not line:
+                line = trial
+            else:
+                draw.text((M, y), line, font=font, fill="black")
+                y += int(size * 1.3)
+                line = word
+        if line:
+            draw.text((M, y), line, font=font, fill="black")
+            y += int(size * 1.3)
+        y += gap
+        if y > H - M:
+            break
+    return _pil_page_to_pdf(page)
+
+
+def _image_to_pdf_bytes(data):
+    """Fit a JPG/PNG onto a letter page (landscape photos get a landscape page)."""
+    import io as _io
+    from PIL import Image, ImageOps
+    img = Image.open(_io.BytesIO(data))
+    img = ImageOps.exif_transpose(img)
+    if img.mode in ("RGBA", "LA", "P"):
+        img = img.convert("RGBA")
+        bg = Image.new("RGB", img.size, "white")
+        bg.paste(img, mask=img.split()[-1])
+        img = bg
+    else:
+        img = img.convert("RGB")
+    w, h = img.size
+    W, H = (1650, 1275) if w > h else (1275, 1650)
+    M = 75
+    scale = min((W - 2 * M) / w, (H - 2 * M) / h, 2.0)
+    nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
+    img = img.resize((nw, nh), Image.LANCZOS)
+    page = Image.new("RGB", (W, H), "white")
+    page.paste(img, ((W - nw) // 2, (H - nh) // 2))
+    return _pil_page_to_pdf(page)
+
+
+def _build_review_pdf(orders, files_by_order, blobs, covers):
+    """Merge the review documents into one PDF. Returns (pdf_bytes, skipped)."""
+    import io as _io
+    from pypdf import PdfReader, PdfWriter
+
+    writer, skipped = PdfWriter(), []
+
+    def _add(pdf_bytes):
+        for p in list(PdfReader(_io.BytesIO(pdf_bytes)).pages):
+            writer.add_page(p)
+
+    for o in orders:
+        files = files_by_order.get(o["order_guid"], [])
+        if not files:
+            continue
+        label = f"Order #{o.get('order_number') or '?'}"
+        first_page = len(writer.pages)
+        if covers:
+            blocks = [(label, 78, 18),
+                      (o.get("company") or "", 46, 4),
+                      (o.get("client") or "", 46, 4),
+                      (o.get("address") or "", 40, 28),
+                      (f"{o['date_label']}  -  {o['location_name']}", 40, 28),
+                      (f"{len(files)} review document{'s' if len(files) != 1 else ''}:", 38, 6)]
+            blocks += [(f["filename"], 34, 0) for f in files[:14]]
+            if len(files) > 14:
+                blocks.append((f"... and {len(files) - 14} more", 34, 0))
+            _add(_text_page_pdf([b for b in blocks if b[0]]))
+        for f in files:
+            data = blobs.get(f["id"])
+            ext = os.path.splitext(f["filename"])[1].lower()
+            if data is None:
+                skipped.append((label, f["filename"], "could not be downloaded"))
+                continue
+            if not _file_matches_type(ext, data):
+                skipped.append((label, f["filename"], "is not a valid file"))
+                continue
+            try:
+                if ext == ".pdf":
+                    reader = PdfReader(_io.BytesIO(data))
+                    if reader.is_encrypted and not reader.decrypt(""):
+                        raise ValueError("password-protected")
+                    for p in list(reader.pages):
+                        writer.add_page(p)
+                else:
+                    _add(_image_to_pdf_bytes(data))
+            except Exception as e:                       # one bad file must not sink the batch
+                logger.warning(f"[REVIEWS] skipped {f['filename']}: {e}")
+                skipped.append((label, f["filename"], "could not be read"))
+        if len(writer.pages) > first_page:
+            title = label + (f" - {o['company']}" if o.get("company") else
+                             f" - {o['client']}" if o.get("client") else "")
+            writer.add_outline_item(title, first_page)
+
+    if skipped:
+        blocks = [("Not included", 64, 20),
+                  ("These files could not be added to this PDF. Open them from the Reviews page.", 36, 24)]
+        blocks += [(f"{a}: {b} {c}", 34, 4) for a, b, c in skipped[:28]]
+        _add(_text_page_pdf(blocks))
+
+    out = _io.BytesIO()
+    writer.write(out)
+    return out.getvalue(), skipped
+
+
+@app.route("/reviews/pdf")
+@role_required("admin", "catering")
+def reviews_pdf():
+    try:
+        import pypdf, PIL                                  # noqa: F401
+    except ImportError:
+        return Response("PDF export needs the 'pypdf' and 'Pillow' packages. "
+                        "Add them to requirements.txt and redeploy.", status=501,
+                        mimetype="text/plain")
+
+    f = _review_args()
+    guids = [x for x in request.args.getlist("guid") if x][:REVIEW_MAX_ROWS]
+    covers = request.args.get("covers", "1") != "0"
+    if f["docs"] == "any":      # orders without documents add nothing, and shouldn't use up the row limit
+        f["docs"] = "has"
+
+    if guids:   # ticked rows win: the filters only built the list they came from
+        orders, _ = _review_search(_review_blank_filters(), guids=guids,
+                                   limit=REVIEW_MAX_ROWS, newest_first=False)
+    else:
+        orders, _ = _review_search(f, limit=REVIEW_MAX_ROWS, newest_first=False)
+    files_by_order = _review_files([o["order_guid"] for o in orders])
+    all_files = [f for o in orders for f in files_by_order.get(o["order_guid"], [])]
+
+    if not all_files:
+        return Response("No review documents match.", status=404, mimetype="text/plain")
+    if len(all_files) > REVIEW_PDF_MAX_FILES:
+        return Response(f"That is {len(all_files)} files; the limit is {REVIEW_PDF_MAX_FILES} per PDF. "
+                        "Narrow the search or tick fewer orders.", status=400, mimetype="text/plain")
+
+    def _fetch(f):
+        try:
+            return f["id"], _sp_download(f["sharepoint_id"])[1]
+        except Exception as e:
+            logger.error(f"[REVIEWS] download failed for {f['filename']}: {e}")
+            return f["id"], None
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=REVIEW_PDF_DL_WORKERS) as pool:
+        blobs = dict(pool.map(_fetch, all_files))
+
+    if sum(len(b) for b in blobs.values() if b) > REVIEW_PDF_MAX_BYTES:
+        return Response("Those files add up to more than 150 MB. Tick fewer orders.",
+                        status=413, mimetype="text/plain")
+
+    pdf, _skipped = _build_review_pdf(orders, files_by_order, blobs, covers)
+    stamp = datetime.now(pytz.timezone("America/New_York")).strftime("%Y%m%d")
+    return Response(pdf, mimetype="application/pdf", headers={
+        "Content-Disposition": f'inline; filename="review-documents-{stamp}.pdf"',
+        "X-Content-Type-Options": "nosniff",
+    })
 
 
 @app.route("/admin/reload-cache")

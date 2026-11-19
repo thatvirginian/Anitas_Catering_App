@@ -24,24 +24,44 @@
      style="display:none"></div>
 
 {# ── Filter Bar ─────────────────────────────────────────────────────────────── #}
-<div class="filter-bar">
-    <a id="print-link"
-           href="/schedule/print?start={{ start_date }}&end={{ end_date }}&route=both{% for g in dining_option_guids %}&dining_option={{ g }}{% endfor %}{% for n in selected_drivers %}&driver={{ n | urlencode }}{% endfor %}{% for gid in selected_groups %}&group={{ gid }}{% endfor %}"
-           class="filter-btn filter-btn--ghost" target="_blank">PRINT VIEW</a>
-    <form class="filter-form" method="GET" action="/schedule">
-        <div class="filter-group">
-            <label class="filter-label">FROM</label>
-            <input class="filter-input" type="date" name="start" value="{{ start_date }}">
+<div class="fbar">
+    <form class="fbar-form" method="GET" action="/schedule">
+      <div class="fbar-row">
+        <div class="fbar-field fbar-field--date">
+            <label class="fbar-label" for="f-start">FROM</label>
+            <input class="filter-input" id="f-start" type="date" name="start" value="{{ start_date }}">
         </div>
-        <div class="filter-group">
-            <label class="filter-label">TO</label>
-            <input class="filter-input" type="date" name="end" value="{{ end_date }}">
+        <div class="fbar-field fbar-field--date">
+            <label class="fbar-label" for="f-end">TO</label>
+            <input class="filter-input" id="f-end" type="date" name="end" value="{{ end_date }}">
         </div>
-        <button class="filter-btn" type="submit">APPLY</button>
-        <a class="filter-btn filter-btn--ghost" href="/schedule">RESET</a>
-
-        <div class="filter-group do-wrapper">
-            <label class="filter-label">DINING OPTION</label>
+        <div class="fbar-field fbar-field--md do-wrapper" id="loc-wrapper">
+            <label class="fbar-label">LOCATION</label>
+            <div class="do-trigger" id="loc-trigger" onclick="toggleLocPanel(event)">
+                <span class="do-trigger-text" id="loc-label">All locations</span>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span class="do-badge" id="loc-count"></span>
+                    <span style="font-size:10px;color:var(--ink-light);">&#9660;</span>
+                </div>
+            </div>
+            <div class="do-panel" id="loc-panel" style="display:none;">
+                <div class="do-item" onclick="toggleLocAll(event)">
+                    <input type="checkbox" id="loc-opt-all">
+                    <label>All locations</label>
+                </div>
+                <div class="do-divider"></div>
+                {% for loc in locations %}
+                <div class="do-item" onclick="toggleLocOpt(event)">
+                    <input type="checkbox" name="location" value="{{ loc.guid }}" data-chip="Location" data-label="{{ loc.name }}"
+                           id="loc-opt-{{ loop.index }}"
+                           {% if loc.guid in selected_locations %}checked{% endif %}>
+                    <label>{{ loc.name }}</label>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="fbar-field fbar-field--md do-wrapper">
+            <label class="fbar-label">DINING OPTION</label>
             <div class="do-trigger" id="do-trigger" onclick="toggleDOPanel(event)">
                 <span class="do-trigger-text" id="do-label">Loading...</span>
                 <div style="display:flex;align-items:center;gap:6px;">
@@ -52,7 +72,7 @@
             <div class="do-panel" id="do-panel" style="display:none;">
                 <div class="do-item" onclick="toggleDOAll(event)">
                     <input type="checkbox" id="do-opt-all">
-                    <label for="do-opt-all">All dining options</label>
+                    <label>All dining options</label>
                 </div>
                 <div class="do-divider"></div>
                 {% for opt in dining_options %}
@@ -62,15 +82,13 @@
                            value="{{ opt.guid }}"
                            id="do-opt-{{ loop.index }}"
                            {% if opt.guid in dining_option_guids %}checked{% endif %}>
-                    <label for="do-opt-{{ loop.index }}">{{ opt.name }}</label>
+                    <label>{{ opt.name }}</label>
                 </div>
                 {% endfor %}
             </div>
         </div>
-
-        {# ── Driver / driver-group filter (multi-select) ───────────────────────── #}
-        <div class="filter-group do-wrapper" id="drv-wrapper">
-            <label class="filter-label">DRIVER</label>
+        <div class="fbar-field fbar-field--md do-wrapper" id="drv-wrapper">
+            <label class="fbar-label">DRIVER</label>
             <div class="do-trigger" id="drv-trigger" onclick="toggleDrvPanel(event)">
                 <span class="do-trigger-text" id="drv-label">All drivers</span>
                 <div style="display:flex;align-items:center;gap:6px;">
@@ -89,7 +107,7 @@
                 <div class="do-heading">GROUPS</div>
                 {% for grp in driver_groups %}
                 <div class="do-item" onclick="toggleDrvOpt(event)">
-                    <input type="checkbox" name="group" value="{{ grp.id }}"
+                    <input type="checkbox" name="group" value="{{ grp.id }}" data-chip="Group"
                            data-label="{{ grp.name }}"
                            {% if grp.id|string in selected_groups %}checked{% endif %}>
                     <span>{{ grp.name }} <span class="do-meta">({{ grp.member_count }})</span></span>
@@ -100,14 +118,14 @@
                 <div class="do-divider"></div>
                 <div class="do-heading">DRIVERS</div>
                 <div class="do-item" onclick="toggleDrvOpt(event)">
-                    <input type="checkbox" name="driver" value="__none__"
+                    <input type="checkbox" name="driver" value="__none__" data-chip="Driver"
                            data-label="No driver assigned"
                            {% if '__none__' in selected_drivers %}checked{% endif %}>
                     <span><em>No driver assigned</em></span>
                 </div>
                 {% for d in driver_options %}
                 <div class="do-item" onclick="toggleDrvOpt(event)">
-                    <input type="checkbox" name="driver" value="{{ d.name }}"
+                    <input type="checkbox" name="driver" value="{{ d.name }}" data-chip="Driver"
                            data-label="{{ d.name }}"
                            {% if d.name in selected_drivers %}checked{% endif %}>
                     <span>{{ d.name }}{% if not d.active %} <span class="do-meta">(inactive)</span>{% endif %}</span>
@@ -115,24 +133,76 @@
                 {% endfor %}
             </div>
         </div>
+      </div>
+      <div class="fbar-row">
+        <div class="fbar-field">
+            <label class="fbar-label" for="f-company">COMPANY</label>
+            <input class="filter-input" id="f-company" type="search" name="company" data-chip="Company"
+                   value="{{ company }}" placeholder="any company" autocomplete="off">
+        </div>
+        {% if client_types %}
+        <div class="fbar-field fbar-field--md do-wrapper" id="type-wrapper">
+            <label class="fbar-label">COMPANY TYPE</label>
+            <div class="do-trigger" id="type-trigger" onclick="toggleTypePanel(event)">
+                <span class="do-trigger-text" id="type-label">All types</span>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span class="do-badge" id="type-count"></span>
+                    <span style="font-size:10px;color:var(--ink-light);">&#9660;</span>
+                </div>
+            </div>
+            <div class="do-panel" id="type-panel" style="display:none;">
+                <div class="do-item" onclick="toggleTypeAll(event)">
+                    <input type="checkbox" id="type-opt-all">
+                    <span>All types</span>
+                </div>
+                <div class="do-divider"></div>
+                {% for t in client_types %}
+                <div class="do-item" onclick="toggleTypeOpt(event)">
+                    <input type="checkbox" name="client_type" value="{{ t }}" data-chip="Type" data-label="{{ t }}"
+                           {% if t in selected_types %}checked{% endif %}>
+                    <span>{{ t }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+        <div class="fbar-field">
+            <label class="fbar-label" for="f-customer">CUSTOMER</label>
+            <input class="filter-input" id="f-customer" type="search" name="customer" data-chip="Customer"
+                   value="{{ customer }}" placeholder="any customer" autocomplete="off">
+        </div>
+      </div>
+      <div class="fbar-foot">
+        <div class="fbar-chips" hidden><span class="fbar-chips-label">ACTIVE FILTERS</span></div>
+                <div class="fbar-meta">
+            {# ── Route Toggle ──────────────────────────────────────────────────── #}
+            <div class="route-toggle">
+                <button type="button" class="toggle-btn active" data-route="both">BOTH</button>
+                <button type="button" class="toggle-btn" data-route="north">NORTH</button>
+                <button type="button" class="toggle-btn" data-route="south">SOUTH</button>
+            </div>
+    
+            <div class="totals-bar">
+                {% for label, amount in totals.items() %}
+                <div class="total-chip {% if label == 'Grand Total' %}total-chip--grand{% endif %}">
+                    <span class="total-chip__label">{{ label.upper() }}</span>
+                    <span class="total-chip__value">{{ amount }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="fbar-actions">
+            <button class="filter-btn" type="submit">APPLY</button>
+            <a class="filter-btn filter-btn--ghost" href="/schedule">RESET</a>
+            <a id="print-link"
+               href="/schedule/print?start={{ start_date }}&end={{ end_date }}&route=both{% for g in dining_option_guids %}&dining_option={{ g }}{% endfor %}{% for n in selected_drivers %}&driver={{ n | urlencode }}{% endfor %}{% for g in selected_locations %}&location={{ g }}{% endfor %}{% for gid in selected_groups %}&group={{ gid }}{% endfor %}{% if company %}&company={{ company|urlencode }}{% endif %}{% if customer %}&customer={{ customer|urlencode }}{% endif %}{% for t in selected_types %}&client_type={{ t|urlencode }}{% endfor %}"
+               class="filter-btn filter-btn--ghost" target="_blank">PRINT VIEW</a>
+        </div>
+      </div>
     </form>
 
-    {# ── Route Toggle ──────────────────────────────────────────────────────── #}
-    <div class="route-toggle">
-        <button class="toggle-btn active" data-route="both">BOTH</button>
-        <button class="toggle-btn" data-route="north">NORTH</button>
-        <button class="toggle-btn" data-route="south">SOUTH</button>
-    </div>
-
-    <div class="totals-bar">
-        {% for label, amount in totals.items() %}
-        <div class="total-chip {% if label == 'Grand Total' %}total-chip--grand{% endif %}">
-            <span class="total-chip__label">{{ label.upper() }}</span>
-            <span class="total-chip__value">{{ amount }}</span>
-        </div>
-        {% endfor %}
-    </div>
 </div>
+<script src="{{ url_for('static', filename='filterbar.js') }}"></script>
 
 {# ── Schedule Body ───────────────────────────────────────────────────────────── #}
 {% if not grouped %}
@@ -485,8 +555,10 @@ function updateDOLabel() {
 
 function toggleDOPanel(e) {
     e.stopPropagation();
-    const drvPanel = document.getElementById('drv-panel');   // only one panel open at a time
-    if (drvPanel) drvPanel.style.display = 'none';
+    ['drv-panel', 'type-panel'].forEach(id => {              // only one panel open at a time
+        const other = document.getElementById(id);
+        if (other) other.style.display = 'none';
+    });
     const panel = document.getElementById('do-panel');
     panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
 }
@@ -551,8 +623,10 @@ function updateDrvLabel() {
 
 function toggleDrvPanel(e) {
     e.stopPropagation();
-    const doPanel = document.getElementById('do-panel');     // only one panel open at a time
-    if (doPanel) doPanel.style.display = 'none';
+    ['do-panel', 'type-panel'].forEach(id => {               // only one panel open at a time
+        const other = document.getElementById(id);
+        if (other) other.style.display = 'none';
+    });
     const panel = document.getElementById('drv-panel');
     panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
 }
@@ -577,6 +651,106 @@ document.addEventListener('click', e => {
 });
 
 document.addEventListener('DOMContentLoaded', updateDrvLabel);
+
+// ── Location dropdown ─────────────────────────────────────────────────────────
+function updateLocLabel() {
+    const checked = [...document.querySelectorAll('#loc-panel input[name="location"]:checked')];
+    const label   = document.getElementById('loc-label');
+    const badge   = document.getElementById('loc-count');
+    const allCb   = document.getElementById('loc-opt-all');
+
+    if (checked.length === 0) {
+        label.textContent   = 'All locations';
+        badge.style.display = 'none';
+        allCb.checked       = true;
+    } else if (checked.length === 1) {
+        label.textContent   = checked[0].nextElementSibling.textContent.trim();
+        badge.style.display = 'none';
+        allCb.checked       = false;
+    } else {
+        label.textContent   = checked[0].nextElementSibling.textContent.trim();
+        badge.textContent   = checked.length;
+        badge.style.display = 'inline-flex';
+        allCb.checked       = false;
+    }
+}
+
+function toggleLocPanel(e) {
+    e.stopPropagation();
+    const panel = document.getElementById('loc-panel');
+    panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+}
+
+function toggleLocOpt(e) {
+    const cb = e.currentTarget.querySelector('input[type=checkbox]');
+    if (e.target !== cb) cb.checked = !cb.checked;
+    document.getElementById('loc-opt-all').checked = false;
+    updateLocLabel();
+}
+
+function toggleLocAll(e) {
+    const allCb = document.getElementById('loc-opt-all');
+    if (e.target !== allCb) allCb.checked = !allCb.checked;
+    if (allCb.checked) {
+        document.querySelectorAll('#loc-panel input[name="location"]')
+            .forEach(c => c.checked = false);
+    }
+    updateLocLabel();
+}
+document.addEventListener('click', e => {
+    const w = document.getElementById('loc-wrapper');
+    if (w && !w.contains(e.target)) document.getElementById('loc-panel').style.display = 'none';
+});
+document.addEventListener('DOMContentLoaded', updateLocLabel);
+
+// ── Company type filter ───────────────────────────────────────────────────────
+function updateTypeLabel() {
+    const label = document.getElementById('type-label');
+    if (!label) return;
+    const checked = [...document.querySelectorAll('#type-panel input[name="client_type"]:checked')];
+    const badge   = document.getElementById('type-count');
+    const allCb   = document.getElementById('type-opt-all');
+    if (checked.length === 0) {
+        label.textContent   = 'All types';
+        badge.style.display = 'none';
+        allCb.checked       = true;
+    } else {
+        label.textContent   = checked[0].dataset.label;
+        allCb.checked       = false;
+        badge.textContent   = checked.length;
+        badge.style.display = checked.length > 1 ? 'inline-flex' : 'none';
+    }
+}
+
+function toggleTypePanel(e) {
+    e.stopPropagation();
+    ['do-panel', 'drv-panel'].forEach(id => {                // only one panel open at a time
+        const other = document.getElementById(id);
+        if (other) other.style.display = 'none';
+    });
+    const panel = document.getElementById('type-panel');
+    panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+}
+
+function toggleTypeOpt(e) {
+    const cb = e.currentTarget.querySelector('input[type=checkbox]');
+    if (e.target !== cb) cb.checked = !cb.checked;
+    updateTypeLabel();
+}
+
+function toggleTypeAll(e) {
+    document.querySelectorAll('#type-panel input[name="client_type"]').forEach(c => c.checked = false);
+    updateTypeLabel();
+}
+
+document.addEventListener('click', e => {
+    const wrapper = document.getElementById('type-wrapper');
+    if (wrapper && !wrapper.contains(e.target)) {
+        document.getElementById('type-panel').style.display = 'none';
+    }
+});
+
+document.addEventListener('DOMContentLoaded', updateTypeLabel);
 </script>
 
 <!-- ── Attachment Modal ──────────────────────────────────────────────────── -->

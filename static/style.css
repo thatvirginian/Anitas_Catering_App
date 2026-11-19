@@ -907,3 +907,150 @@ body {
     color: var(--ink, #222);
     white-space: nowrap;
 }
+
+/* ── Review documents page ─────────────────────────────────────────────────── */
+.reviews-page { padding: 0 0 40px; }
+.rv-q { min-width: 320px; }
+.rv-toolbar {
+    display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
+    padding: 14px 24px; background: var(--bg-white); border-bottom: 1px solid var(--rule);
+}
+.rv-summary { font-family: var(--font-body); font-size: 13px; color: var(--ink-mid); margin-right: auto; }
+.rv-warn { margin-left: 12px; color: var(--accent); font-weight: 700; }
+.rv-cover { font-family: var(--font-display); font-size: 12px; letter-spacing: 0.06em; color: var(--ink-mid); }
+.rv-cover input { margin-right: 6px; }
+.rv-note { padding: 8px 24px; background: var(--accent-dim); color: var(--accent); font-size: 13px; font-weight: 700; }
+.rv-note[hidden] { display: none; }
+#rv-print-btn:disabled { opacity: 0.4; cursor: not-allowed; background: var(--ink); border-color: var(--ink); }
+.rv-table { width: calc(100% - 48px); margin: 16px 24px 0; border-collapse: collapse; background: var(--bg-white); }
+.rv-table th {
+    font-family: var(--font-display); font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; text-align: left; color: var(--ink-mid);
+    padding: 8px 10px; border-bottom: 2px solid var(--ink);
+}
+.rv-table td { font-size: 13px; padding: 8px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+.rv-table tr:hover td { background: #faf9f7; }
+.rv-table .rv-check { width: 32px; text-align: center; }
+.rv-files a { display: block; color: var(--north); text-decoration: none; }
+.rv-files a:hover { text-decoration: underline; }
+.rv-empty { padding: 40px 24px; color: var(--ink-light); font-size: 14px; }
+@media (max-width: 800px) {
+    .rv-table { display: block; overflow-x: auto; width: calc(100% - 32px); margin: 12px 16px 0; }
+    .rv-q { min-width: 0; width: 100%; }
+}
+
+/* ── Company / customer / type filters (manager page + Reviews page) ───────── */
+.filter-form { flex-wrap: wrap; row-gap: 8px; }
+.filter-input--text { width: 150px; }
+
+.rv-none { color: var(--ink-light); }
+
+/* ── Filter bar v2 (overview, manager page, reviews) ───────────────────────────
+   Labels sit above their controls; fields are grouped in rows; chips show what is
+   applied; one action area at the bottom right. Old .filter-bar rules still serve
+   the other pages. */
+.fbar {
+    background: var(--bg-white);
+    border-bottom: 1px solid var(--rule);
+    padding: 14px 24px 12px;
+}
+.fbar-form { margin: 0; }
+.fbar-row {
+    display: flex; flex-wrap: wrap;
+    gap: 10px 16px;
+}
+.fbar-row + .fbar-row { margin-top: 12px; }
+
+.fbar-field {
+    display: flex; flex-direction: column; gap: 4px;
+    width: 230px; min-width: 0;
+}
+.fbar-field--date { width: 150px; }
+.fbar-field--sm   { width: 110px; }
+
+.fbar-label {
+    font-family: var(--font-display);
+    font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--ink-mid);
+}
+.fbar .filter-input,
+.fbar .filter-select,
+.fbar .do-trigger {
+    box-sizing: border-box; width: 100%; min-width: 0; height: 32px;
+}
+.fbar .filter-input { padding: 5px 8px; }
+.fbar .filter-select { padding: 3px 8px; }
+.fbar .do-trigger-text { max-width: none; flex: 1; min-width: 0; }
+.fbar .do-trigger > div { flex-shrink: 0; }
+.fbar .do-panel { min-width: 100%; }
+
+.fbar-foot {
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 10px 16px;
+    margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--rule);
+}
+.fbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+
+.fbar-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.fbar-chips[hidden] { display: none; }
+.fbar-chips-label {
+    font-family: var(--font-display); font-size: 10px; font-weight: 700;
+    letter-spacing: 0.12em; color: var(--ink-light); margin-right: 2px;
+}
+.fbar-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--font-mono); font-size: 12px; line-height: 1.3;
+    color: var(--ink); background: var(--bg);
+    border: 1px solid var(--rule); padding: 2px 5px 2px 8px;
+    cursor: pointer; transition: all 0.15s;
+}
+.fbar-chip:hover { border-color: var(--accent); color: var(--accent); }
+.fbar-chip-x { font-size: 15px; line-height: 1; opacity: 0.6; }
+
+.fbar-strip {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 12px 16px;
+    margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--rule);
+}
+.fbar-strip .totals-bar { margin-left: auto; }
+
+@media (max-width: 720px) {
+    .fbar { padding: 14px 16px; }
+    .fbar-row { flex-direction: column; }
+    .fbar-field, .fbar-field--date, .fbar-field--sm { width: 100%; }
+    .fbar-actions { width: 100%; flex-direction: column; align-items: stretch; margin-left: 0; }
+    .fbar-strip .totals-bar { margin-left: 0; width: 100%; }
+}
+
+/* v2 compact: one flowing field area, one footer line */
+.fbar-form { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: flex-end; }
+.fbar-row { display: contents; }
+.fbar-row + .fbar-row { margin-top: 0; }
+.fbar-foot { flex: 1 0 100%; margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--rule); gap: 10px 20px; }
+.fbar-chips { flex: 1 1 auto; min-height: 28px; }
+.fbar-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; }
+.fbar-meta .totals-bar { margin: 0; }
+.fbar-actions { margin-left: 0; }
+@media (max-width: 720px) {
+    .fbar-form { flex-direction: column; align-items: stretch; }
+    .fbar-meta { width: 100%; }
+}
+
+/* sortable table headers */
+th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+th.sortable:hover { color: var(--accent); }
+th.sortable .sort-ind { font-size: 9px; color: var(--ink-light); margin-left: 2px; }
+th.sortable[aria-sort="ascending"] .sort-ind,
+th.sortable[aria-sort="descending"] .sort-ind { color: var(--accent); font-size: 10px; }
+
+.rv-order-link { color: var(--north); font-weight: 700; text-decoration: none; border-bottom: 1px solid transparent; }
+.rv-order-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* v2 narrower fields */
+.fbar-field       { width: 195px; }
+.fbar-field--date { width: 140px; }
+.fbar-field--md   { width: 170px; }
+.fbar-field--sm   { width: 80px; }
+.fbar .do-trigger-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 720px) { .fbar-field, .fbar-field--date, .fbar-field--md, .fbar-field--sm { width: 100%; } }
+.fbar-actions { margin-left: auto; }
+@media (max-width: 720px) { .fbar-actions { margin-left: 0; } }

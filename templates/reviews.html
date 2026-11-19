@@ -1,0 +1,299 @@
+{% extends "base.html" %}
+{% block title %}Review Documents{% endblock %}
+
+{% block content %}
+<div class="reviews-page">
+
+  {# ── Search ── #}
+  <div class="fbar">
+    <form method="GET" action="{{ url_for('reviews') }}" class="fbar-form" id="rv-search">
+      <div class="fbar-row">
+        <div class="fbar-field fbar-field--date">
+          <label class="fbar-label" for="f-start">FROM</label>
+          <input class="filter-input" id="f-start" type="date" name="start" value="{{ start }}" data-chip="From">
+        </div>
+        <div class="fbar-field fbar-field--date">
+          <label class="fbar-label" for="f-end">TO</label>
+          <input class="filter-input" id="f-end" type="date" name="end" value="{{ end }}" data-chip="To">
+        </div>
+        <div class="fbar-field fbar-field--md do-wrapper" id="loc-wrapper">
+            <label class="fbar-label">LOCATION</label>
+            <div class="do-trigger" id="loc-trigger" onclick="toggleLocPanel(event)">
+                <span class="do-trigger-text" id="loc-label">All locations</span>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span class="do-badge" id="loc-count"></span>
+                    <span style="font-size:10px;color:var(--ink-light);">&#9660;</span>
+                </div>
+            </div>
+            <div class="do-panel" id="loc-panel" style="display:none;">
+                <div class="do-item" onclick="toggleLocAll(event)">
+                    <input type="checkbox" id="loc-opt-all">
+                    <label>All locations</label>
+                </div>
+                <div class="do-divider"></div>
+                {% for loc in locations %}
+                <div class="do-item" onclick="toggleLocOpt(event)">
+                    <input type="checkbox" name="location" value="{{ loc.guid }}" data-chip="Location" data-label="{{ loc.name }}"
+                           id="loc-opt-{{ loop.index }}"
+                           {% if loc.guid in selected_locations %}checked{% endif %}>
+                    <label>{{ loc.name }}</label>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="fbar-field fbar-field--md">
+          <label class="fbar-label" for="f-docs">REVIEW DOCUMENTS</label>
+          <select class="filter-select" id="f-docs" name="docs" data-chip="Documents" data-chip-default="any">
+            <option value="any"  {% if docs == 'any'  %}selected{% endif %}>Any</option>
+            <option value="has"  {% if docs == 'has'  %}selected{% endif %}>Has documents</option>
+            <option value="none" {% if docs == 'none' %}selected{% endif %}>No documents yet</option>
+          </select>
+        </div>
+        <div class="fbar-field fbar-field--sm">
+          <label class="fbar-label" for="f-order">ORDER #</label>
+          <input class="filter-input" id="f-order" type="search" name="order" value="{{ order_no }}"
+                 data-chip="Order" autocomplete="off">
+        </div>
+      </div>
+      <div class="fbar-row">
+        <div class="fbar-field">
+            <label class="fbar-label" for="f-company">COMPANY</label>
+            <input class="filter-input" id="f-company" type="search" name="company" data-chip="Company"
+                   value="{{ company }}" placeholder="any company" autocomplete="off">
+        </div>
+        {% if client_types %}
+        <div class="fbar-field fbar-field--md do-wrapper" id="type-wrapper">
+            <label class="fbar-label">COMPANY TYPE</label>
+            <div class="do-trigger" id="type-trigger" onclick="toggleTypePanel(event)">
+                <span class="do-trigger-text" id="type-label">All types</span>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span class="do-badge" id="type-count"></span>
+                    <span style="font-size:10px;color:var(--ink-light);">&#9660;</span>
+                </div>
+            </div>
+            <div class="do-panel" id="type-panel" style="display:none;">
+                <div class="do-item" onclick="toggleTypeAll(event)">
+                    <input type="checkbox" id="type-opt-all">
+                    <label>All types</label>
+                </div>
+                <div class="do-divider"></div>
+                {% for t in client_types %}
+                <div class="do-item" onclick="toggleTypeOpt(event)">
+                    <input type="checkbox" name="client_type" value="{{ t }}" data-chip="Type" data-label="{{ t }}"
+                           {% if t in selected_types %}checked{% endif %}>
+                    <label>{{ t }}</label>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+        <div class="fbar-field">
+            <label class="fbar-label" for="f-customer">CUSTOMER</label>
+            <input class="filter-input" id="f-customer" type="search" name="customer" data-chip="Customer"
+                   value="{{ customer }}" placeholder="any customer" autocomplete="off">
+        </div>
+        <div class="fbar-field">
+          <label class="fbar-label" for="f-address">ADDRESS</label>
+          <input class="filter-input" id="f-address" type="search" name="address" data-chip="Address"
+                 value="{{ address }}" placeholder="street, city or zip" autocomplete="off">
+        </div>
+      </div>
+      <div class="fbar-foot">
+        <div class="fbar-chips" hidden><span class="fbar-chips-label">ACTIVE FILTERS</span></div>
+        <div class="fbar-actions">
+          <button type="submit" class="filter-btn">SEARCH</button>
+          <a class="filter-btn filter-btn--ghost" href="{{ url_for('reviews') }}">CLEAR</a>
+        </div>
+      </div>
+    </form>
+  </div>
+  <script src="{{ url_for('static', filename='filterbar.js') }}"></script>
+
+  {% if searched is not defined %}
+  <div class="rv-note">This page is newer than the app.py that is running, so it cannot show results.
+    Copy the latest app.py over the old one and restart the server.</div>
+  {% elif not searched %}
+  <div class="rv-empty">Search above to find orders. Press SEARCH with everything blank to list the newest.</div>
+  {% else %}
+  {# ── Results + print ── #}
+  <form method="GET" action="{{ url_for('reviews_pdf') }}" target="_blank" id="rv-print"
+        data-total-orders="{{ orders|length }}" data-total-files="{{ total_files }}"
+        data-max-files="{{ max_files }}">
+    <input type="hidden" name="start" value="{{ start }}">
+    <input type="hidden" name="end" value="{{ end }}">
+    <input type="hidden" name="company" value="{{ company }}">
+    <input type="hidden" name="customer" value="{{ customer }}">
+    <input type="hidden" name="address" value="{{ address }}">
+    <input type="hidden" name="order" value="{{ order_no }}">
+    <input type="hidden" name="docs" value="{{ docs }}">
+    {% for t in selected_types %}<input type="hidden" name="client_type" value="{{ t }}">{% endfor %}
+    {% for g in selected_locations %}<input type="hidden" name="location" value="{{ g }}">{% endfor %}
+
+    <div class="rv-toolbar">
+      <div class="rv-summary">
+        <strong>{{ orders|length }}</strong> order{{ '' if orders|length == 1 else 's' }}
+        &middot; <strong>{{ orders_with }}</strong> with review documents
+        &middot; <strong>{{ total_files }}</strong> file{{ '' if total_files == 1 else 's' }}
+        {% if truncated %}<span class="rv-warn">Showing the newest {{ max_rows }}. Narrow your search to see the rest.</span>{% endif %}
+      </div>
+      <label class="rv-cover"><input type="checkbox" name="covers" value="1" checked>
+        Cover sheet for each order</label>
+      <button type="submit" class="filter-btn" id="rv-print-btn" {% if not total_files %}disabled{% endif %}>PRINT ALL</button>
+    </div>
+    <div class="rv-note" id="rv-note" hidden></div>
+
+    {% if orders %}
+    <table class="rv-table" data-sortable>
+      <thead>
+        <tr>
+          <th class="rv-check"><input type="checkbox" id="rv-all" title="Select all"></th>
+          <th data-sort="text">Date</th><th data-sort="num">Order</th><th data-sort="text">Location</th><th data-sort="text">Company</th><th data-sort="text">Type</th><th data-sort="text">Customer</th><th data-sort="text">Address</th><th data-sort="num">Documents</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for o in orders %}
+        <tr>
+          <td class="rv-check"><input type="checkbox" class="rv-pick" name="guid" value="{{ o.order_guid }}"
+                                     data-files="{{ o.files|length }}" {% if not o.files %}disabled title="No review documents"{% endif %}></td>
+          <td data-v="{{ o.order_date.isoformat() if o.order_date else '' }}">{{ o.date_label }}</td>
+          <td data-v="{{ o.order_number or '' }}">{% if o.order_number %}<a class="rv-order-link" href="{{ url_for('order_detail', order_guid=o.order_guid) }}" target="_blank" rel="noopener" title="Open order detail">{{ o.order_number }}</a>{% endif %}</td>
+          <td>{{ o.location_name }}</td>
+          <td>{{ o.company or '' }}</td>
+          <td>{{ o.client_type or '' }}</td>
+          <td>{{ o.client or '' }}</td>
+          <td>{{ o.address or '' }}</td>
+          <td class="rv-files" data-v="{{ o.files|length }}">
+            {% for f in o.files %}
+              <a href="{{ url_for('download_attachment', attachment_id=f.id) }}" target="_blank" rel="noopener">{{ f.filename }}</a>
+            {% else %}
+              <span class="rv-none">&mdash;</span>
+            {% endfor %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="rv-empty">No orders{% if filters_active %} match those filters{% endif %}.</div>
+    {% endif %}
+  </form>
+  {% endif %}
+</div>
+
+<script src="{{ url_for('static', filename='sortable.js') }}"></script>
+<script>
+// ── Location dropdown ─────────────────────────────────────────────────────────
+function updateLocLabel() {
+    const checked = [...document.querySelectorAll('#loc-panel input[name="location"]:checked')];
+    const label   = document.getElementById('loc-label');
+    const badge   = document.getElementById('loc-count');
+    const allCb   = document.getElementById('loc-opt-all');
+
+    if (checked.length === 0) {
+        label.textContent   = 'All locations';
+        badge.style.display = 'none';
+        allCb.checked       = true;
+    } else if (checked.length === 1) {
+        label.textContent   = checked[0].nextElementSibling.textContent.trim();
+        badge.style.display = 'none';
+        allCb.checked       = false;
+    } else {
+        label.textContent   = checked[0].nextElementSibling.textContent.trim();
+        badge.textContent   = checked.length;
+        badge.style.display = 'inline-flex';
+        allCb.checked       = false;
+    }
+}
+
+function toggleLocPanel(e) {
+    e.stopPropagation();
+    const panel = document.getElementById('loc-panel');
+    panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+}
+
+function toggleLocOpt(e) {
+    const cb = e.currentTarget.querySelector('input[type=checkbox]');
+    if (e.target !== cb) cb.checked = !cb.checked;
+    document.getElementById('loc-opt-all').checked = false;
+    updateLocLabel();
+}
+
+function toggleLocAll(e) {
+    const allCb = document.getElementById('loc-opt-all');
+    if (e.target !== allCb) allCb.checked = !allCb.checked;
+    if (allCb.checked) {
+        document.querySelectorAll('#loc-panel input[name="location"]')
+            .forEach(c => c.checked = false);
+    }
+    updateLocLabel();
+}
+document.addEventListener('click', e => {
+    const w = document.getElementById('loc-wrapper');
+    if (w && !w.contains(e.target)) document.getElementById('loc-panel').style.display = 'none';
+});
+document.addEventListener('DOMContentLoaded', updateLocLabel);
+
+// ── Company type dropdown ─────────────────────────────────────────────────────
+function updateTypeLabel() {
+  const label = document.getElementById('type-label');
+  if (!label) return;
+  const checked = [...document.querySelectorAll('#type-panel input[name="client_type"]:checked')];
+  const badge = document.getElementById('type-count'), allCb = document.getElementById('type-opt-all');
+  if (!checked.length) { label.textContent = 'All types'; badge.style.display = 'none'; allCb.checked = true; }
+  else {
+    label.textContent = checked[0].nextElementSibling.textContent.trim(); allCb.checked = false;
+    badge.textContent = checked.length; badge.style.display = checked.length > 1 ? 'inline-flex' : 'none';
+  }
+}
+function toggleTypePanel(e) {
+  e.stopPropagation();
+  const p = document.getElementById('type-panel'); p.style.display = p.style.display === 'block' ? 'none' : 'block';
+}
+function toggleTypeOpt(e) {
+  const cb = e.currentTarget.querySelector('input[type=checkbox]');
+  if (e.target !== cb) cb.checked = !cb.checked;
+  document.getElementById('type-opt-all').checked = false; updateTypeLabel();
+}
+function toggleTypeAll(e) {
+  const all = document.getElementById('type-opt-all');
+  if (e.target !== all) all.checked = !all.checked;
+  if (all.checked) document.querySelectorAll('#type-panel input[name="client_type"]').forEach(c => c.checked = false);
+  updateTypeLabel();
+}
+document.addEventListener('click', e => {
+  document.querySelectorAll('.do-wrapper').forEach(w => {
+    const p = w.querySelector('.do-panel'); if (p && !w.contains(e.target)) p.style.display = 'none';
+  });
+});
+document.addEventListener('DOMContentLoaded', updateTypeLabel);
+
+(function () {
+  const form  = document.getElementById('rv-print');
+  if (!form) return;
+  const btn   = document.getElementById('rv-print-btn');
+  const note  = document.getElementById('rv-note');
+  const all   = document.getElementById('rv-all');
+  const picks = () => Array.from(form.querySelectorAll('.rv-pick:not(:disabled)'));
+
+  function refresh() {
+    const sel = picks().filter(c => c.checked);
+    const orders = sel.length || parseInt(form.dataset.totalOrders, 10);
+    const files  = sel.length ? sel.reduce((n, c) => n + parseInt(c.dataset.files, 10), 0)
+                              : parseInt(form.dataset.totalFiles, 10);
+    btn.textContent = sel.length ? `PRINT ${sel.length} SELECTED` : 'PRINT ALL';
+    const maxFiles = parseInt(form.dataset.maxFiles, 10);
+    const tooMany = files > maxFiles;
+    btn.disabled = tooMany || files === 0;
+    note.hidden = !tooMany;
+    note.textContent = tooMany
+      ? `That is ${files} files and one PDF holds up to ${maxFiles}. Tick fewer orders or narrow the search.` : '';
+    if (all) all.checked = sel.length > 0 && sel.length === picks().length;
+  }
+  form.addEventListener('change', e => {
+    if (e.target === all) picks().forEach(c => { c.checked = all.checked; });
+    refresh();
+  });
+  refresh();
+})();
+</script>
+{% endblock %}

@@ -5,20 +5,19 @@
 {% block content %}
 
 {# ── Filter Bar ─────────────────────────────────────────────────────────────── #}
-<div class="filter-bar">
-    <form class="filter-form" method="GET" action="/store">
-        <div class="filter-group">
-            <label class="filter-label">FROM</label>
-            <input class="filter-input" type="date" name="start" value="{{ start_date }}">
+<div class="fbar">
+    <form class="fbar-form" method="GET" action="/store">
+      <div class="fbar-row">
+        <div class="fbar-field fbar-field--date">
+            <label class="fbar-label" for="f-start">FROM</label>
+            <input class="filter-input" id="f-start" type="date" name="start" value="{{ start_date }}">
         </div>
-        <div class="filter-group">
-            <label class="filter-label">TO</label>
-            <input class="filter-input" type="date" name="end" value="{{ end_date }}">
+        <div class="fbar-field fbar-field--date">
+            <label class="fbar-label" for="f-end">TO</label>
+            <input class="filter-input" id="f-end" type="date" name="end" value="{{ end_date }}">
         </div>
-
-        {# ── Location dropdown ─────────────────────────────────────────────── #}
-        <div class="filter-group do-wrapper" id="loc-wrapper">
-            <label class="filter-label">LOCATION</label>
+        <div class="fbar-field fbar-field--md do-wrapper" id="loc-wrapper">
+            <label class="fbar-label">LOCATION</label>
             <div class="do-trigger" id="loc-trigger" onclick="toggleLocPanel(event)">
                 <span class="do-trigger-text" id="loc-label">Loading...</span>
                 <div style="display:flex;align-items:center;gap:6px;">
@@ -29,27 +28,24 @@
             <div class="do-panel" id="loc-panel" style="display:none;">
                 <div class="do-item" onclick="toggleLocAll(event)">
                     <input type="checkbox" id="loc-opt-all">
-                    <label for="loc-opt-all">All locations</label>
+                    <label>All locations</label>
                 </div>
                 <div class="do-divider"></div>
                 {% for loc in locations %}
                 <div class="do-item" onclick="toggleLocOpt(event)">
                     <input type="checkbox"
                            name="location"
-                           value="{{ loc.guid }}"
+                           value="{{ loc.guid }}" data-chip="Location" data-label="{{ loc.name }}"
                            id="loc-opt-{{ loop.index }}"
                            {% if loc.guid in selected_locations %}checked{% endif %}>
-                    <label for="loc-opt-{{ loop.index }}">{{ loc.name }}</label>
+                    <label>{{ loc.name }}</label>
                 </div>
                 {% endfor %}
             </div>
         </div>
-
-        {# ── Dining option dropdown ─────────────────────────────────────────── #}
-
-        <div class="filter-group do-wrapper">
-            {% if 'admin' in user.roles or 'catering' in user.roles %}
-            <label class="filter-label">DINING OPTION</label>
+        {% if 'admin' in user.roles or 'catering' in user.roles %}
+        <div class="fbar-field fbar-field--md do-wrapper">
+            <label class="fbar-label">DINING OPTION</label>
             <div class="do-trigger" id="do-trigger" onclick="toggleDOPanel(event)">
                 <span class="do-trigger-text" id="do-label">Loading...</span>
                 <div style="display:flex;align-items:center;gap:6px;">
@@ -60,7 +56,7 @@
             <div class="do-panel" id="do-panel" style="display:none;">
                 <div class="do-item" onclick="toggleDOAll(event)">
                     <input type="checkbox" id="do-opt-all">
-                    <label for="do-opt-all">All dining options</label>
+                    <label>All dining options</label>
                 </div>
                 <div class="do-divider"></div>
                 {% for opt in dining_options %}
@@ -70,34 +66,80 @@
                            value="{{ opt.guid }}"
                            id="do-opt-{{ loop.index }}"
                            {% if opt.guid in dining_option_guids %}checked{% endif %}>
-                    <label for="do-opt-{{ loop.index }}">{{ opt.name }}</label>
+                    <label>{{ opt.name }}</label>
                 </div>
                 {% endfor %}
             </div>
         </div>
         {% endif %}
-        <button class="filter-btn" type="submit">APPLY</button>
-        <a class="filter-btn filter-btn--ghost" href="/store">RESET</a>
-    </form>
-
-    <div class="totals-bar">
-        {% if 'admin' in user.roles or 'catering' in user.roles %}
-        <div class="total-chip total-chip--grand">
-            <span class="total-chip__label">GRAND TOTAL</span>
-            <span class="total-chip__value">{{ grand_total }}</span>
+      </div>
+      <div class="fbar-row">
+        <div class="fbar-field">
+            <label class="fbar-label" for="f-company">COMPANY</label>
+            <input class="filter-input" id="f-company" type="search" name="company" data-chip="Company"
+                   value="{{ company }}" placeholder="any company" autocomplete="off">
+        </div>
+        {% if client_types %}
+        <div class="fbar-field fbar-field--md do-wrapper" id="type-wrapper">
+            <label class="fbar-label">COMPANY TYPE</label>
+            <div class="do-trigger" id="type-trigger" onclick="toggleTypePanel(event)">
+                <span class="do-trigger-text" id="type-label">All types</span>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span class="do-badge" id="type-count"></span>
+                    <span style="font-size:10px;color:var(--ink-light);">&#9660;</span>
+                </div>
+            </div>
+            <div class="do-panel" id="type-panel" style="display:none;">
+                <div class="do-item" onclick="toggleTypeAll(event)">
+                    <input type="checkbox" id="type-opt-all">
+                    <label>All types</label>
+                </div>
+                <div class="do-divider"></div>
+                {% for t in client_types %}
+                <div class="do-item" onclick="toggleTypeOpt(event)">
+                    <input type="checkbox" name="client_type" value="{{ t }}" data-chip="Type" data-label="{{ t }}"
+                           {% if t in selected_types %}checked{% endif %}>
+                    <label>{{ t }}</label>
+                </div>
+                {% endfor %}
+            </div>
         </div>
         {% endif %}
-        <a id="store-print-link"
-           href="/store/print?start={{ start_date }}&end={{ end_date }}{% for g in selected_locations %}&location={{ g }}{% endfor %}{% for g in dining_option_guids %}&dining_option={{ g }}{% endfor %}"
-           class="filter-btn filter-btn--ghost" target="_blank">PRINT VIEW</a>
-    </div>
-    </div>
+        <div class="fbar-field">
+            <label class="fbar-label" for="f-customer">CUSTOMER</label>
+            <input class="filter-input" id="f-customer" type="search" name="customer" data-chip="Customer"
+                   value="{{ customer }}" placeholder="any customer" autocomplete="off">
+        </div>
+      </div>
+      <div class="fbar-foot">
+        <div class="fbar-chips" hidden><span class="fbar-chips-label">ACTIVE FILTERS</span></div>
+                {% if 'admin' in user.roles or 'catering' in user.roles %}
+        <div class="fbar-meta">
+            <div class="totals-bar">
+                <div class="total-chip total-chip--grand">
+                    <span class="total-chip__label">GRAND TOTAL</span>
+                    <span class="total-chip__value">{{ grand_total }}</span>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        <div class="fbar-actions">
+            <button class="filter-btn" type="submit">APPLY</button>
+            <a class="filter-btn filter-btn--ghost" href="/store">RESET</a>
+            <a id="store-print-link"
+               href="/store/print?start={{ start_date }}&end={{ end_date }}{% for g in selected_locations %}&location={{ g }}{% endfor %}{% for g in dining_option_guids %}&dining_option={{ g }}{% endfor %}{% if company %}&company={{ company|urlencode }}{% endif %}{% if customer %}&customer={{ customer|urlencode }}{% endif %}{% for t in selected_types %}&client_type={{ t|urlencode }}{% endfor %}"
+               class="filter-btn filter-btn--ghost" target="_blank">PRINT VIEW</a>
+        </div>
+      </div>
+    </form>
+
 </div>
+<script src="{{ url_for('static', filename='filterbar.js') }}"></script>
 
 {# ── Schedule Body ───────────────────────────────────────────────────────────── #}
 {% if not grouped %}
 <div class="empty-state">
-    <p>No catering orders found for this date range.</p>
+    <p>No catering orders found for this date range{% if company or customer or selected_types %} and filters{% endif %}.</p>
 </div>
 {% else %}
 
@@ -355,17 +397,60 @@ function toggleDOAll(e) {
     updateDOLabel();
 }
 
-// Close panels when clicking outside
+// ── Company type dropdown ─────────────────────────────────────────────────────
+function updateTypeLabel() {
+    const label = document.getElementById('type-label');
+    if (!label) return;
+    const checked = [...document.querySelectorAll('#type-panel input[name="client_type"]:checked')];
+    const badge   = document.getElementById('type-count');
+    const allCb   = document.getElementById('type-opt-all');
+    if (checked.length === 0) {
+        label.textContent   = 'All types';
+        badge.style.display = 'none';
+        allCb.checked       = true;
+    } else {
+        label.textContent   = checked[0].nextElementSibling.textContent.trim();
+        allCb.checked       = false;
+        badge.textContent   = checked.length;
+        badge.style.display = checked.length > 1 ? 'inline-flex' : 'none';
+    }
+}
+
+function toggleTypePanel(e) {
+    e.stopPropagation();
+    const panel = document.getElementById('type-panel');
+    panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+}
+
+function toggleTypeOpt(e) {
+    const cb = e.currentTarget.querySelector('input[type=checkbox]');
+    if (e.target !== cb) cb.checked = !cb.checked;
+    document.getElementById('type-opt-all').checked = false;
+    updateTypeLabel();
+}
+
+function toggleTypeAll(e) {
+    const allCb = document.getElementById('type-opt-all');
+    if (e.target !== allCb) allCb.checked = !allCb.checked;
+    if (allCb.checked) {
+        document.querySelectorAll('#type-panel input[name="client_type"]')
+            .forEach(c => c.checked = false);
+    }
+    updateTypeLabel();
+}
+
+// Close any open filter panel when clicking outside it
 document.addEventListener('click', e => {
-    if (!document.getElementById('loc-wrapper').contains(e.target))
-        document.getElementById('loc-panel').style.display = 'none';
-    if (!document.querySelector('.do-wrapper:not(#loc-wrapper)').contains(e.target))
-        document.getElementById('do-panel').style.display = 'none';
+    document.querySelectorAll('.do-wrapper').forEach(w => {
+        const panel = w.querySelector('.do-panel');
+        if (panel && !w.contains(e.target)) panel.style.display = 'none';
+    });
 });
 
 document.addEventListener('DOMContentLoaded', () => {
-    updateLocLabel();
-    updateDOLabel();
+    if (document.getElementById('loc-label')) updateLocLabel();
+    if (document.getElementById('do-label'))  updateDOLabel();
+    updateTypeLabel();
 });
 </script>
 
