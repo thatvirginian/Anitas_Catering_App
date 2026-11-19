@@ -8,3 +8,6 @@ requests
 pytz
 pandas
 openpyxl
+reportlab
+pypdf>=4.0
+Pillow>=10.1
