@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Internal Catering Portal</title>
+    <title>Catering Ops</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
@@ -58,7 +58,7 @@
         .home-hero-eyebrow {
             font-family: var(--font-mono);
             font-size: 11px; letter-spacing: 0.16em;
-            color: #fff200; text-transform: uppercase;
+            color: var(--accent); text-transform: uppercase;
             margin-bottom: 10px;
         }
 
@@ -183,7 +183,7 @@
         <span class="home-header-divider">|</span>
         <span class="home-header-sub">CATERING OPS</span>
     </div>
-    {% if 'admin' in user.roles %}
+    {% if 'admin' in user.roles %}    
     <a href="/.auth/logout" class="home-header-logout">LOGOUT</a>
     {% endif %}
 </header>
@@ -219,6 +219,18 @@
         </div>
         <div class="home-card-arrow">OPEN →</div>
     </a>
+    <a href="{{ url_for('forecast') }}" class="home-card">
+        <span class="home-card-tag home-card-tag--live">LIVE</span>
+        <div class="home-card-icon">📈</div>
+        <div class="home-card-label">Planning</div>
+        <div class="home-card-title">Forecast</div>
+        <div class="home-card-desc">
+            Upcoming catering volume by location and day, with drill-down
+            to the orders behind each number.
+        </div>
+        <div class="home-card-arrow">OPEN →</div>
+    </a>
+
     {% if 'admin' in user.roles or 'catering' in user.roles %}
     <a href="{{ url_for('reviews') }}" class="home-card">
         <span class="home-card-tag home-card-tag--live">LIVE</span>
@@ -259,10 +271,6 @@
         <div class="home-card-arrow">OPEN →</div>
     </a>
     {% endif %}
-
-
-
-
 
 </div>
 
